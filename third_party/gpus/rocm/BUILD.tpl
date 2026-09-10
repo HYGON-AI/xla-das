@@ -1,3 +1,5 @@
+# Modified by Hygon Information Technology Co., Ltd., 2026.
+
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@local_config_rocm//rocm:build_defs.bzl", "rocm_lib_import")
@@ -115,15 +117,18 @@ cc_library(
     linkopts = select({
         ":build_hermetic": [
             "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib64",
         ],
         ":link_only": [
         ],
         ":multiple_rocm_paths": [
             "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib64",
             "-Wl,-rpath=%{rocm_lib_paths}",
         ],
         "//conditions:default": [
             "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib64",
             "-Wl,-rpath,/opt/rocm/lib",
         ],
     }),
@@ -188,6 +193,7 @@ cc_library(
         [
             "%{rocm_root}/lib/libamd_comgr_loader.so*",
             "%{rocm_root}/lib/libamd_comgr.so*",
+            "%{rocm_root}/lib64/libamd_comgr.so*",
             "%{rocm_root}/lib/llvm/lib/libLLVM.so*",
             "%{rocm_root}/lib/llvm/lib/libclang-cpp.so*",
         ],
@@ -352,12 +358,14 @@ rocm_lib_import(
     ],
 )
 
-rocm_lib_import(
+cc_library(
     name = "rocprofiler_sdk",
     data = glob(["%{rocm_root}/lib/librocprofiler-sdk*.so*"]),
-    interface_library = "%{rocm_root}/lib/librocprofiler-sdk.so",
+    visibility = ["//visibility:public"],
     deps = [
         ":amd_comgr_libs",
+        ":rocm_headers_includes",
+        ":rocm_rpath",
         ":system_libs",
     ],
 )
@@ -432,6 +440,7 @@ filegroup(
             "%{rocm_root}/lib/llvm/**",
             "%{rocm_root}/share/hip/version",
             "%{rocm_root}/amdgcn/**",
+            "%{rocm_root}/lib64/libamd_comgr.so*",
         ],
         exclude = ["%{rocm_root}/lib/llvm/lib/*.a"],
     ) + [":system_libs_data"],

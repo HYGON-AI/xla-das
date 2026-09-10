@@ -1,3 +1,5 @@
+# Modified by Hygon Information Technology Co., Ltd., 2026.
+
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
@@ -1007,7 +1009,7 @@ cc_library(
         [],
         [":hlo_op_profiler_stub"],
     ) + if_rocm_is_configured(
-        [":hlo_op_profiler_rocm"],
+        [":hlo_op_profiler_stub"],
     ) + if_cuda_is_configured(
         [":hlo_op_profiler_cuda"],
     ),
