@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2022 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -315,7 +319,7 @@ __launch_bounds__(BLOCK_SIZE) __global__
       arg.activationType = 0;
     }
 
-    __barrier(__CLK_LOCAL_MEM_FENCE);
+    __syncthreads();
 
     // Last active thread updates cumulative offset for next batch
     if (threadIdx.x == batch_size - 1) {
@@ -326,7 +330,7 @@ __launch_bounds__(BLOCK_SIZE) __global__
     size_t total_bytes = batch_size * sizeof(hipblaslt_ext::UserArguments);
     copy_shared_to_global(sharedUserArgs, &dest_args[batch_start], total_bytes);
     // Synchronize before next iteration to ensure copy is complete
-    __barrier(__CLK_LOCAL_MEM_FENCE | __CLK_GLOBAL_MEM_FENCE);
+    __syncthreads();
   }
 }
 
@@ -439,7 +443,7 @@ __launch_bounds__(BLOCK_SIZE) __global__
       arg.activationType = 0;
     }
 
-    __barrier(__CLK_LOCAL_MEM_FENCE);
+    __syncthreads();
 
     // Last thread updates cumulative offset for next batch
     if (threadIdx.x == batch_size - 1) {
@@ -450,7 +454,7 @@ __launch_bounds__(BLOCK_SIZE) __global__
     size_t total_bytes = batch_size * sizeof(hipblaslt_ext::UserArguments);
     copy_shared_to_global(sharedUserArgs, &dest_args[batch_start], total_bytes);
     // Synchronize before next iteration to ensure copy is complete
-    __barrier(__CLK_LOCAL_MEM_FENCE | __CLK_GLOBAL_MEM_FENCE);
+    __syncthreads();
   }
 }
 
@@ -561,7 +565,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ void SetUserArgsKernelRaggedInBatchDim(
       arg.activationType = 0;
     }
 
-    __barrier(__CLK_LOCAL_MEM_FENCE);
+    __syncthreads();
 
     // Last active thread updates cumulative offset for next batch
     if (threadIdx.x == batch_size - 1) {
@@ -572,7 +576,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ void SetUserArgsKernelRaggedInBatchDim(
     size_t total_bytes = batch_size * sizeof(hipblaslt_ext::UserArguments);
     copy_shared_to_global(sharedUserArgs, &dest_args[batch_start], total_bytes);
     // Synchronize before next iteration to ensure copy is complete
-    __barrier(__CLK_LOCAL_MEM_FENCE | __CLK_GLOBAL_MEM_FENCE);
+    __syncthreads();
   }
 }
 

@@ -1,4 +1,9 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2023 The OpenXLA Authors.
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -233,15 +238,14 @@ auto BlasLt::MatmulPlan::GetAlgorithmsForGroupedMatmul(
 
   std::unique_ptr<ActivateContext> activation = blas_lt->parent_->Activate();
 
-  auto problem = grouped_gemm_->getProblemTypes()[0];
+  auto problem = grouped_gemm_->getProblemTypesV2()[0];
 
-  grouped_gemm_->setMaxWorkspaceBytes(max_workspace_size);
+  hipblaslt_ext::GemmPreferenceV2 preference;
+  preference.setMaxWorkspaceBytes(max_workspace_size);
 
-  SE_HIPBLAS_RETURN_IF_ERROR(hipblaslt_ext::getAllAlgos(
-      blas_lt->blas_lt_.get(), hipblaslt_ext::GemmType::HIPBLASLT_GROUPED_GEMM,
-      problem.getOpA(), problem.getOpB(), problem.getTypeA(),
-      problem.getTypeB(), problem.getTypeC(), problem.getTypeD(),
-      problem.getTypeCompute(), heuristicResult));
+  SE_HIPBLAS_RETURN_IF_ERROR(
+      grouped_gemm_->algoGetHeuristic(max_algorithm_count, preference,
+                                      heuristicResult));
   VLOG(2) << "Total heuristics found: " << heuristicResult.size();
   std::vector<MatmulAlgorithm> algorithms;
   algorithms.reserve(max_algorithm_count);
@@ -795,8 +799,8 @@ void BlasLt::MatmulPlan::InitializeGroupedGemm(
   }
 
   // TODO: recover GemmEpilogues from args
-  std::vector<hipblaslt_ext::GemmEpilogue> epilogue(cfg_->group_count);
-  std::vector<hipblaslt_ext::GemmInputs> inputs(cfg_->group_count);
+  std::vector<hipblaslt_ext::GemmEpilogueV2> epilogue(cfg_->group_count);
+  std::vector<hipblaslt_ext::GemmInputsV2> inputs(cfg_->group_count);
 
   float salpha = cfg_->alpha.real();
   float sbeta = cfg_->beta;
@@ -810,7 +814,7 @@ void BlasLt::MatmulPlan::InitializeGroupedGemm(
     inputs[i].setBeta(static_cast<void*>(&sbeta));
   }
 
-  hipblaslt_ext::GemmProblemType problem(
+  hipblaslt_ext::GemmProblemTypeV2 problem(
       AsHipblasOperation(cfg_->trans_a), AsHipblasOperation(cfg_->trans_b),
       AsHipblasDataType(cfg_->type_a), AsHipblasDataType(cfg_->type_b),
       AsHipblasDataType(cfg_->type_c), AsHipblasDataType(cfg_->type_d),
