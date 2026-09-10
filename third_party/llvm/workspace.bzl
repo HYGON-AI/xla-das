@@ -27,7 +27,11 @@ def repo(name):
             "//third_party/llvm:zstd.patch",
             "//third_party/llvm:lit_test.patch",
             "//third_party/llvm:run_lit.patch",
-            "//third_party/llvm:hcu_register_targets.patch",
+            "//third_party/llvm:hcu-adaptation.patch",
         ],
-        link_files = {"//third_party/llvm:run_lit.sh": "mlir/run_lit.sh"},
+        link_files = {
+            "//third_party/llvm:IntrinsicsHCU.td": "llvm/include/llvm/IR/IntrinsicsHCU.td",
+            "//third_party/llvm:ROCDLHCUOps.td": "mlir/include/mlir/Dialect/LLVMIR/ROCDLHCUOps.td",
+            "//third_party/llvm:run_lit.sh": "mlir/run_lit.sh",
+        },
     )
