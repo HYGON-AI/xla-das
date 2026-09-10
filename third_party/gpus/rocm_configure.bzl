@@ -12,6 +12,8 @@
   * `TF_ROCM_RBE_DOCKER_IMAGE`: Docker image to be used in rbe worker to execute the action
   * `TF_ROCM_RBE_SINGLE_GPU_POOL`: The name of the rbe pool used to execute single gpu tests
   * `TF_ROCM_RBE_MULTI_GPU_POOL`: The name of the rbe pool used to execute multi gpu tests
+
+  Modified by Hygon Information Technology Co., Ltd., 2026.
 """
 
 load("@bazel_skylib//lib:paths.bzl", "paths")
@@ -164,6 +166,16 @@ def _rocm_include_path(repository_ctx, rocm_config, bash_bin):
 
     inc_dirs.append(resource_dir + "/include")
     inc_dirs.append(resource_dir + "/share")
+    inc_dirs.append(resource_dir_abs + "/include")
+    inc_dirs.append(resource_dir_abs + "/share")
+
+    # DTK's dcc dependency files can report the clang resource directory
+    # through the /opt/dtk/llvm symlink even when -print-resource-dir resolves
+    # to /opt/dtk/dcc. Declare both spellings as builtin include directories.
+    rocm_llvm_root = repository_ctx.os.environ.get(_ROCM_TOOLKIT_PATH, rocm_config.rocm_toolkit_path)
+    rocm_llvm_resource_dir = rocm_llvm_root + "/llvm/lib/clang/17.0.0"
+    inc_dirs.append(rocm_llvm_resource_dir + "/include")
+    inc_dirs.append(rocm_llvm_resource_dir + "/share")
 
     return inc_dirs
 
@@ -187,9 +199,13 @@ def _amdgpu_targets(repository_ctx, rocm_toolkit_path, bash_bin):
         targets = list(targets.keys())
         amdgpu_targets_str = ",".join(targets)
     amdgpu_targets = [amdgpu for amdgpu in amdgpu_targets_str.split(",") if amdgpu]
+    hcu_enabled = _flag_enabled(repository_ctx, "HCU_ENABLED")
     for amdgpu_target in amdgpu_targets:
         if amdgpu_target[:3] != "gfx":
-            auto_configure_fail("Invalid AMDGPU target: %s" % amdgpu_target)
+            if hcu_enabled:
+                auto_configure_fail("Invalid HCU target: %s" % amdgpu_target)
+            else:
+                auto_configure_fail("Invalid AMDGPU target: %s" % amdgpu_target)
     return amdgpu_targets
 
 def _hipcc_env(repository_ctx):
@@ -294,6 +310,7 @@ def _select_rocm_lib_paths(repository_ctx, libs_paths, bash_bin):
 
     return libs
 
+# HCU not support rocprofiler sdk now, remove lib path
 def _find_libs(repository_ctx, rocm_config, bash_bin):
     """Returns the ROCm libraries on the system.
 
@@ -323,7 +340,6 @@ def _find_libs(repository_ctx, rocm_config, bash_bin):
             ("rocrand", repo_path),
             ("hipblas", repo_path),
             ("hipblaslt", repo_path),
-            ("rocprofiler-sdk", repo_path),
         ]
     ]
 
@@ -834,6 +850,7 @@ _ENVIRONS = [
     _TF_ROCM_RBE_SINGLE_GPU_POOL,
     _TF_ROCM_RBE_MULTI_GPU_POOL,
     _TF_ROCM_MULTIPLE_PATHS,
+    "HCU_ENABLED",
 ]
 
 remote_rocm_configure = repository_rule(
