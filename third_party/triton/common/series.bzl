@@ -8,6 +8,8 @@ github.com/triton-lang/triton instead.
 
 If you are fixing something in a BUILD file, please update the patch file in
 third_party/triton/oss_only or add a patch there instead.
+
+Modified by Hygon Information Technology Co., Ltd., 2026.
 """
 
 common_patch_list = [
@@ -32,5 +34,8 @@ common_patch_list = [
     "//third_party/triton:common/llvm_cl893899241.patch",
     "//third_party/triton:common/stage_and_cluster_map.patch",
     "//third_party/triton:common/llvm_cl895542516.patch",
+    "//third_party/triton:common/hcu_gfx9_arch_support.patch",
+    "//third_party/triton:common/hcu_buffer_resource_compat.patch",
+    "//third_party/triton:common/hcu_gfx936_codegen_compat.patch",
     # Add new patches just above this line
 ]

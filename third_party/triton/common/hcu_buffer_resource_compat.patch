@@ -1,0 +1,27 @@
+Use DTK/HCU-compatible buffer out-of-bounds offsets.
+
+The staging HCU Triton tree uses -8 as the masked out-of-bounds offset for
+buffer operations.
+
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/BufferOpsEmitter.cpp
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/BufferOpsEmitter.cpp
+@@ -263,8 +263,7 @@ void BufferEmitter::fillCommonArgs(Type type, Value rsrcDesc,
+   // Please note: the index passed is not in bytes, but in number of elements
+   // In order to pass the index to the buffer operation, we need to convert in
+   // bytes (i.e., we need to multiply by `elementByteWidth`)
+-  Value vOffsetOutOfBunds = b.int_val(
+-      32, static_cast<int>(std::numeric_limits<int>::max() + int64_t(1)));
++  Value vOffsetOutOfBunds = b.int_val(32, -8);
+   Value vOffsetBytes = b.mul(b.int_val(32, elementByteWidth), vOffsetElems);
+   Value maskedOffsetBytes = b.select(pred, vOffsetBytes, vOffsetOutOfBunds);
+ 
+@@ -295,8 +294,7 @@ void BufferEmitter::fillCommonArgsAtomics(Type type, Value rsrcDesc,
+   // Please note: the index passed is not in bytes, but in number of elements
+   // In order to pass the index to the buffer operation, we need to convert in
+   // bytes (i.e., we need to multiply by `elementByteWidth`)
+-  Value vOffsetOutOfBunds = b.int_val(
+-      32, static_cast<int>(std::numeric_limits<int>::max() + int64_t(1)));
++  Value vOffsetOutOfBunds = b.int_val(32, -8);
+   Value vOffsetBytes = b.mul(b.int_val(32, elementByteWidth), vOffsetElems);
+   Value maskedOffsetBytes = b.select(pred, vOffsetBytes, vOffsetOutOfBunds);
+ 

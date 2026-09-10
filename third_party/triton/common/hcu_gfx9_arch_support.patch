@@ -1,0 +1,24 @@
+Recognize DTK/HCU gfx9 targets before asking LLVM's target parser.
+
+The LLVM target parser used by this build does not define these DTK/HCU
+architecture names, while DTK's external HCU toolchain accepts them. Without
+this mapping, Triton AMD lowering classifies gfx936 as Unknown and fails with
+"unsupported target: 'gfx936'".
+
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/TargetUtils.cpp
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/TargetUtils.cpp
+@@ -4,6 +4,14 @@
+ namespace mlir::triton::AMD {
+ 
+ ISAFamily deduceISAFamily(llvm::StringRef arch) {
++  // DTK/HCU gfx9 targets are not present in the upstream LLVM target parser
++  // used by this build, so recognize them before parseArchAMDGCN().
++  if (arch == "gfx926" || arch == "gfx928" || arch == "gfx936" ||
++      arch == "gfx938" || arch == "gfx92a")
++    return ISAFamily::CDNA3;
++  if (arch == "gfx946")
++    return ISAFamily::CDNA4;
++
+   llvm::AMDGPU::GPUKind kind = llvm::AMDGPU::parseArchAMDGCN(arch);
+ 
+   // See https://llvm.org/docs/AMDGPUUsage.html#processors for how to categorize

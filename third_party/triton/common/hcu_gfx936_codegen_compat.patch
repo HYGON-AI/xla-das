@@ -1,0 +1,120 @@
+diff --git a/third_party/amd/lib/TritonAMDGPUTransforms/ConvertToBufferOps.cpp b/third_party/amd/lib/TritonAMDGPUTransforms/ConvertToBufferOps.cpp
+--- a/third_party/amd/lib/TritonAMDGPUTransforms/ConvertToBufferOps.cpp
++++ b/third_party/amd/lib/TritonAMDGPUTransforms/ConvertToBufferOps.cpp
+@@ -592,6 +592,9 @@
+     ModuleOp mod = getOperation();
+     triton::AMD::TargetInfo targetInfo(archGenerationName);
+ 
++    if (archGenerationName == "gfx936")
++      return;
++
+     // Collect assumptions in the function
+     DenseMap<Value, SetVector<Operation *>> assumptions =
+         AMD::TritonIntegerRangeAnalysis::collectAssumptions(getOperation());
+diff --git a/third_party/amd/lib/TritonAMDGPUTransforms/AccelerateAMDMatmul.cpp b/third_party/amd/lib/TritonAMDGPUTransforms/AccelerateAMDMatmul.cpp
+--- a/third_party/amd/lib/TritonAMDGPUTransforms/AccelerateAMDMatmul.cpp
++++ b/third_party/amd/lib/TritonAMDGPUTransforms/AccelerateAMDMatmul.cpp
+@@ -51,7 +51,25 @@
+ 
+   return 0;
+ }
+ 
++bool isLegacyHcuGfx9(StringRef archGen) {
++  return archGen == "gfx926" || archGen == "gfx928" ||
++         archGen == "gfx92a" || archGen == "gfx936";
++}
++
++void forceIeeeF32DotPrecision(ModuleOp module) {
++  module.walk([](tt::DotOp dotOp) {
++    auto aType = cast<RankedTensorType>(dotOp.getA().getType());
++    auto bType = cast<RankedTensorType>(dotOp.getB().getType());
++    if (dotOp.getInputPrecision() == InputPrecision::TF32 &&
++        aType.getElementType().isF32() && bType.getElementType().isF32()) {
++      dotOp->setAttr("inputPrecision",
++                     tt::InputPrecisionAttr::get(dotOp.getContext(),
++                                                 InputPrecision::IEEE));
++    }
++  });
++}
++
+ FailureOr<ScaleDotElemType> mlirTypeToScaledElemType(Type type) {
+   return llvm::TypeSwitch<Type, FailureOr<ScaleDotElemType>>(type)
+       .Case<Float8E4M3FNType>([](Type) { return ScaleDotElemType::E4M3; })
+@@ -236,10 +236,12 @@
+ 
+ FailureOr<MfmaIntrinsic> chooseMfmaInstruction(tt::DotOp dot, int mfmaVersion,
+                                                int nonKDim,
+-                                               bool withScale = false) {
++                                               bool withScale = false,
++                                               bool enableXF32 = true) {
+   RankedTensorType aType = dot.getA().getType();
+   bool allowXF32 =
+-      dot.getInputPrecision() == InputPrecision::TF32 && mfmaVersion == 3;
++      enableXF32 && dot.getInputPrecision() == InputPrecision::TF32 &&
++      mfmaVersion == 3;
+   return chooseMfmaInstruction(
+       dot.getLoc(), mfmaVersion, dot.getC().getType(), aType.getElementType(),
+       dot.getB().getType().getElementType(), aType.getShape().back(), nonKDim,
+@@ -542,12 +544,13 @@
+   int mfmaVersion;
+   int nonKDim;
+   int kPack;
++  bool enableXF32;
+ 
+ public:
+   BlockedToMFMA(MLIRContext *context, int mfmaVersion, int nonKDim, int kPack,
+-                PatternBenefit benefit = 1)
++                bool enableXF32, PatternBenefit benefit = 1)
+       : OpRewritePattern(context, benefit), mfmaVersion(mfmaVersion),
+-        nonKDim(nonKDim), kPack(kPack) {}
++        nonKDim(nonKDim), kPack(kPack), enableXF32(enableXF32) {}
+ 
+   LogicalResult matchAndRewrite(tt::DotOp dotOp,
+                                 PatternRewriter &rewriter) const override {
+@@ -572,6 +575,9 @@
+ 
+     Type aElemType = oldAType.getElementType();
+     Type bElemType = oldBType.getElementType();
++    if (!enableXF32 && aElemType.isF32() && bElemType.isF32())
++      return rewriter.notifyMatchFailure(dotOp, "F32 MFMA is disabled");
++
+     bool withScale =
+         mfmaVersion == 4 && isF8F6F4(aElemType) && isF8F6F4(bElemType);
+ 
+@@ -580,14 +587,16 @@
+     // If we can't find a proper instruction, we will fall back to select from
+     // normal mfma instructions.
+     FailureOr<MfmaIntrinsic> mfmaInstr =
+-        chooseMfmaInstruction(dotOp, mfmaVersion, nonKDim, withScale);
++        chooseMfmaInstruction(dotOp, mfmaVersion, nonKDim, withScale,
++                              enableXF32);
+     if (failed(mfmaInstr)) {
+       if (!withScale) {
+         return rewriter.notifyMatchFailure(
+             dotOp,
+             "Unable to choose preferable MFMA intrinsic for dot operation.");
+       }
+-      mfmaInstr = chooseMfmaInstruction(dotOp, mfmaVersion, nonKDim, false);
++      mfmaInstr = chooseMfmaInstruction(dotOp, mfmaVersion, nonKDim, false,
++                                        enableXF32);
+       if (failed(mfmaInstr)) {
+         return rewriter.notifyMatchFailure(
+             dotOp, "Unable to choose MFMA intrinsic for dot operation.");
+@@ -1737,6 +1746,9 @@
+     RewritePatternSet mfmaPatterns(context);
+     AMD::TargetInfo ti = AMD::TargetInfo(archGenerationName);
+     unsigned wmmaVersion = getWmmaVersion(archGenerationName);
++    bool enableXF32 = !isLegacyHcuGfx9(archGenerationName);
++    if (!enableXF32)
++      forceIeeeF32DotPrecision(m);
+     switch (auto isaFamily = triton::AMD::deduceISAFamily(archGenerationName)) {
+     case ISAFamily::GFX1250:
+       mfmaPatterns.add<ScaledBlockedToScaledWMMAF8F6F4>(context, wmmaVersion,
+@@ -1756,6 +1769,7 @@
+       mfmaPatterns.add<::DecomposeAMDScaledBlocked>(context, ti, /*benefit=*/3);
+       mfmaPatterns.add<::BlockedToMFMA>(context, getMfmaVersion(isaFamily),
+                                         matrixInstructionSize, kPack,
++                                        enableXF32,
+                                         /*benefit=*/2);
+       break;
+     case ISAFamily::RDNA3:
