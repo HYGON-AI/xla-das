@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,7 +74,11 @@ const absl::string_view kTensorCoreSyncFlagLineName = "Tensor Core Sync Flag";
 const absl::string_view kSparseCoreSyncsLineName = "Sparse Core Syncs";
 
 const absl::string_view kDeviceVendorNvidia = "Nvidia";
+#if XLA_ROCM_ENABLE_HCU || XLA_ROCM_ENABLE_GCVM
+const absl::string_view kDeviceVendorAMD = "HCU";
+#else
 const absl::string_view kDeviceVendorAMD = "AMD";
+#endif
 
 const absl::string_view kTaskEnvPlaneName = "Task Environment";
 

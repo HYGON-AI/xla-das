@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -90,6 +94,11 @@ class RocmComputeCapability {
       "gfx900",   // MI25
       "gfx906",   // MI50 / MI60
       "gfx908",   // MI100
+      "gfx926",   // HCU K100
+      "gfx928",   // HCU K100AI
+      "gfx936",   // HCU C-3000 / BW200
+      "gfx938",   // HCU BW1100 / BW1101
+      "gfx92a",   // HCU K200AI
       "gfx90a",   // MI200
       "gfx942",   // MI300
       "gfx950",   // MI350
@@ -110,6 +119,9 @@ class RocmComputeCapability {
 
   static constexpr absl::string_view kMI100Series[] = {"gfx908"};
 
+  static constexpr absl::string_view kDtkGfx9Series[] = {
+      "gfx926", "gfx928", "gfx936", "gfx938", "gfx92a"};
+
   bool gfx9_mi200() const { return gfx_version() == "gfx90a"; }
 
   static constexpr absl::string_view kMI200Series[] = {"gfx90a"};
@@ -122,7 +134,8 @@ class RocmComputeCapability {
   bool gfx9_mi300_series() const { return IsThisGfxInAnyList(kMI300Series); }
 
   bool gfx9_mi100_or_later() const {
-    return IsThisGfxInAnyList(kMI300Series, kMI200Series, kMI100Series);
+    return IsThisGfxInAnyList(kMI300Series, kMI200Series, kMI100Series,
+                              kDtkGfx9Series);
   }
 
   bool gfx9_mi200_or_later() const {

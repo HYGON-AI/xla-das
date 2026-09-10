@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2018 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -231,8 +235,13 @@ absl::StatusOr<int> GetGpuISAVersion(hipDevice_t device) {
     int version = std::stoi(amdgpu_version);
     return version;
   }
+#if XLA_ROCM_ENABLE_HCU || XLA_ROCM_ENABLE_GCVM
+  return absl::InternalError(absl::StrFormat(
+      "failed to determine HCU ISA version for device %d", device));
+#else
   return absl::InternalError(absl::StrFormat(
       "failed to determine AMDGpu ISA version for device %d", device));
+#endif
 }
 
 // Return the full GCN Architecture Name for the device
@@ -243,8 +252,13 @@ absl::StatusOr<std::string> GetGpuGCNArchName(hipDevice_t device) {
   if (result == hipSuccess) {
     return props.gcnArchName;
   }
+#if XLA_ROCM_ENABLE_HCU || XLA_ROCM_ENABLE_GCVM
+  return absl::InternalError(absl::StrFormat(
+      "failed to determine HCU GCN Arch Name for device %d", device));
+#else
   return absl::InternalError(absl::StrFormat(
       "failed to determine AMDGpu GCN Arch Name for device %d", device));
+#endif
 }
 
 // Helper function that turns the integer output of hipDeviceGetAttribute to
@@ -314,8 +328,22 @@ absl::Status GetGridLimits(int* x, int* y, int* z, hipDevice_t device) {
 }
 
 absl::StatusOr<int64_t> GetMaxRegistersPerMultiprocessor(hipDevice_t device) {
-  return GetSimpleAttribute<int64_t>(
+  absl::StatusOr<int64_t> regs_per_mp = GetSimpleAttribute<int64_t>(
       device, hipDeviceAttributeMaxRegistersPerMultiprocessor);
+  if (regs_per_mp.ok()) {
+    return regs_per_mp;
+  }
+
+  absl::StatusOr<int64_t> regs_per_block = GetMaxRegistersPerBlock(device);
+  if (regs_per_block.ok()) {
+    VLOG(1) << "Falling back to hipDeviceAttributeMaxRegistersPerBlock "
+               "because hipDeviceAttributeMaxRegistersPerMultiprocessor "
+               "is unavailable: "
+            << regs_per_mp.status();
+    return regs_per_block;
+  }
+
+  return regs_per_mp.status();
 }
 
 // Returns the device associated with the given device_ordinal.
@@ -1173,9 +1201,13 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
     TF_ASSIGN_OR_RETURN(std::string device_name, GetDeviceName(device));
     desc.set_name(device_name.empty() ? gcn_arch_name : device_name);
   }
-
+#if XLA_ROCM_ENABLE_HCU || XLA_ROCM_ENABLE_GCVM
+  desc.set_platform_version(
+      absl::StrCat("HCU ISA version: ", gcn_arch_name));
+#else
   desc.set_platform_version(
       absl::StrCat("AMDGPU ISA version: ", gcn_arch_name));
+#endif
 
   // TODO(leary) should be a way to query this from the driver, but this is
   // unlikely to change for us any time soon.
