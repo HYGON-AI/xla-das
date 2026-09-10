@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -92,9 +96,6 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
   pm->addPass(mlir::createLoopInvariantCodeMotionPass());
   pm->addPass(mlir::createCanonicalizerPass());
 
-  // TODO(ROCm) Modify when corresponding run time flags are introduced.
-  std::string schedule_hint = "none";
-
   bool use_async_copy = false;  // Not enabled by default.
   bool use_block_pingpong =
       is_pingpong_schedule_enabled(rocm_cc, use_async_copy);
@@ -108,10 +109,6 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
   }
   pm->addPass(mlir::createTritonAMDGPUConvertToTensorOps());
   pm->addPass(mlir::createCanonicalizerPass());
-  if (schedule_hint != "none") {
-    pm->addPass(
-        mt::createTritonAMDGPUInsertInstructionSchedHintsPass({schedule_hint}));
-  }
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm->addPass(mt::gpu::createTritonGPUReduceDataDuplication());
   if (is_in_thread_transpose_enabled(rocm_cc)) {
@@ -173,10 +170,6 @@ static void MakeLLIR(mlir::OpPassManager* pm,
   pm->addPass(mlir::createCanonicalizerPass());
   pm->addPass(mlir::createCSEPass());
   pm->addPass(mlir::createSymbolDCEPass());
-  if (/*(instruction_sched_variant=="none") == */ /* DISABLES CODE */ (false)) {
-    pm->addPass(mt::createTritonAMDGPULowerInstructionSchedHintsPass(
-        rocm_cc.gfx_version(), num_stages));
-  }
   pm->addPass(mt::createConvertBuiltinFuncToLLVMPass(rocm_cc.gfx_version(),
                                                      /*ftz=*/true));
 }
