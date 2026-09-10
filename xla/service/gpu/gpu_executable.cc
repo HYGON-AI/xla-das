@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -469,9 +473,15 @@ absl::Status GpuExecutable::CheckCompatibilityWithServiceExecutableRunOptions(
     std::string stream_arch = cc.gcn_arch_name();
     std::string gpu_exec_arch =
         gpu_version_.rocm_compute_capability()->gcn_arch_name();
+#if XLA_ROCM_ENABLE_HCU
+    TF_RET_CHECK(stream_arch == gpu_exec_arch)
+        << "HCU ISA version mismatch; expected {" << gpu_exec_arch
+        << ", but was " << stream_arch;
+#else
     TF_RET_CHECK(stream_arch == gpu_exec_arch)
         << "AMDGPU GCN ISA version mismatch; expected {" << gpu_exec_arch
         << ", but was " << stream_arch;
+#endif
   } else if (platform_id == stream_executor::cuda::kCudaPlatformId) {
     se::CudaComputeCapability cc = main_stream->GetCudaComputeCapability();
     TF_RET_CHECK(cc == *gpu_version_.cuda_compute_capability())

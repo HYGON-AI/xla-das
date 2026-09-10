@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2025 The OpenXLA Authors.
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -112,9 +116,15 @@ bool hasAvx512Support() { return GetHostCPUFeatures().lookup("avx512f"); }
 TEST(FeaturesTest, HostFeatures) {
   std::cout << "CPU: " << llvm::sys::getHostCPUName().str() << "\n";
   const llvm::StringMap<bool> features = llvm::sys::getHostCPUFeatures();
+#if XLA_ROCM_ENABLE_HCU
+  std::cout << "Host features x86:" << hasAvx()
+            << ", avx512f:" << hasAvx512Support() << ", sse4a: " << isAmd()
+            << "\n";
+#else
   std::cout << "Host features x86:" << hasAvx()
             << ", avx512f:" << hasAvx512Support() << ", IsAmd: " << isAmd()
             << "\n";
+#endif
 }
 
 TEST(RsqrtTest, EmitRsqrtF32) {

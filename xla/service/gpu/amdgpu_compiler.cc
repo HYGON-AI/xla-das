@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -183,9 +187,13 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
     const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
     const GpuAliasInfo* alias_info, tsl::thread::ThreadPool* thread_pool,
     CompilationStats* compilation_stats) {
+#if XLA_ROCM_ENABLE_HCU
+  HloPassPipeline pre_pipeline("HCU post-layout_assignment part 1",
+                               compilation_stats);
+#else
   HloPassPipeline pre_pipeline("AMDGPU post-layout_assignment part 1",
                                compilation_stats);
-
+#endif
   pre_pipeline.AddPass<DotDimensionMerger>();
 
   for (const auto& req : HipblasPaddingRequirements) {
@@ -206,8 +214,13 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
       hlo_module, stream_exec, options, gpu_target_config, alias_info,
       thread_pool, compilation_stats));
 
+#if XLA_ROCM_ENABLE_HCU
+  HloPassPipeline post_pipeline("HCU post-layout_assignment part 2",
+                                compilation_stats);
+#else
   HloPassPipeline post_pipeline("AMDGPU post-layout_assignment part 2",
                                 compilation_stats);
+#endif
 
   // Transform TriangularSolve ops into custom-calls, so we can add temp
   // memory.
@@ -239,9 +252,15 @@ AMDGPUCompiler::CompileTargetBinary(
   {
     // This may print multiple lines per HLO compilation because of the
     // parallelized compilation of LLVM modules.
+#if XLA_ROCM_ENABLE_HCU
+    XLA_SCOPED_LOGGING_TIMER_IF(
+        "HCUGPUCompiler::CompileTargetBinary - CompileToHsaco",
+        module_config.debug_options().xla_enable_scoped_logging_timers());
+#else
     XLA_SCOPED_LOGGING_TIMER_IF(
         "AMDGPUCompiler::CompileTargetBinary - CompileToHsaco",
         module_config.debug_options().xla_enable_scoped_logging_timers());
+#endif
     // NODE: module_config.compilation_cache_key() is not used in the current
     // implementation of CompileToHsaco since it invalidates the persistent
     // file cache.
