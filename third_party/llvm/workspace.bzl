@@ -1,4 +1,7 @@
-"""Provides the repository macro to import LLVM."""
+"""
+Provides the repository macro to import LLVM.
+Modified by Hygon Information Technology Co., Ltd., 2026.
+"""
 
 load("//third_party:repo.bzl", "tf_http_archive")
 
@@ -24,6 +27,7 @@ def repo(name):
             "//third_party/llvm:zstd.patch",
             "//third_party/llvm:lit_test.patch",
             "//third_party/llvm:run_lit.patch",
+            "//third_party/llvm:hcu_register_targets.patch",
         ],
         link_files = {"//third_party/llvm:run_lit.sh": "mlir/run_lit.sh"},
     )

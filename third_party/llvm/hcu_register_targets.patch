@@ -1,0 +1,55 @@
+diff --git a/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def b/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def
+--- a/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def
++++ b/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def
+@@ -98,7 +98,13 @@ AMDGCN_GPU      ("gfx908",    GK_GFX908,  ( 9, 0,  8), FEATURE_FAST_FMA_F32|FEA
+ AMDGCN_GPU      ("gfx909",    GK_GFX909,  ( 9, 0,  9), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK)
+ AMDGCN_GPU      ("gfx90a",    GK_GFX90A,  ( 9, 0, 10), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
+ AMDGCN_GPU      ("gfx90c",    GK_GFX90C,  ( 9, 0, 12), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK)
++AMDGCN_GPU      ("gfx926",    GK_GFX926,  ( 9, 2,  6), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
++AMDGCN_GPU      ("gfx928",    GK_GFX928,  ( 9, 2,  8), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
++AMDGCN_GPU      ("gfx92a",    GK_GFX92A,  ( 9, 2, 10), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
++AMDGCN_GPU      ("gfx936",    GK_GFX936,  ( 9, 3,  6), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
++AMDGCN_GPU      ("gfx938",    GK_GFX938,  ( 9, 3,  8), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
+ AMDGCN_GPU      ("gfx942",    GK_GFX942,  ( 9, 4,  2), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
++AMDGCN_GPU      ("gfx946",    GK_GFX946,  ( 9, 4,  6), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
+ AMDGCN_GPU      ("gfx950",    GK_GFX950,  ( 9, 5,  0), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
+ AMDGCN_GPU      ("gfx1010",   GK_GFX1010, (10, 1,  0), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK|FEATURE_WGP)
+ AMDGCN_GPU      ("gfx1011",   GK_GFX1011, (10, 1,  1), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK|FEATURE_WGP)
+diff --git a/llvm/lib/Target/AMDGPU/GCNProcessors.td b/llvm/lib/Target/AMDGPU/GCNProcessors.td
+--- a/llvm/lib/Target/AMDGPU/GCNProcessors.td
++++ b/llvm/lib/Target/AMDGPU/GCNProcessors.td
+@@ -192,10 +192,34 @@ def : ProcessorModel<"gfx90c", SIQuarterSpeedModel,
+   FeatureISAVersion9_0_C.Features
+ >;
+ 
++def : ProcessorModel<"gfx926", SIDPGFX942FullSpeedModel,
++  FeatureISAVersion9_4_2.Features
++>;
++
++def : ProcessorModel<"gfx928", SIDPGFX942FullSpeedModel,
++  FeatureISAVersion9_4_2.Features
++>;
++
++def : ProcessorModel<"gfx92a", SIDPGFX942FullSpeedModel,
++  FeatureISAVersion9_4_2.Features
++>;
++
++def : ProcessorModel<"gfx936", SIDPGFX942FullSpeedModel,
++  FeatureISAVersion9_4_2.Features
++>;
++
++def : ProcessorModel<"gfx938", SIDPGFX942FullSpeedModel,
++  FeatureISAVersion9_4_2.Features
++>;
++
+ def : ProcessorModel<"gfx942", SIDPGFX942FullSpeedModel,
+   FeatureISAVersion9_4_2.Features
+ >;
+ 
++def : ProcessorModel<"gfx946", SIDPGFX950FullSpeedModel,
++  FeatureISAVersion9_5_0.Features
++>;
++
+ def : ProcessorModel<"gfx950", SIDPGFX950FullSpeedModel,
+   FeatureISAVersion9_5_0.Features
+ >;
