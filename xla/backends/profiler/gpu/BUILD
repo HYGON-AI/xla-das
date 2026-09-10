@@ -1,3 +1,5 @@
+# Modified by Hygon Information Technology Co., Ltd., 2026.
+
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_test")
@@ -15,14 +17,13 @@ package(
     default_visibility = internal_visibility(["//xla:internal"]),
 )
 
+# HCU not support rocprofiler sdk now, cant use device_tracer_rocm
 cc_library(
     name = "device_tracer",
     visibility = ["//visibility:public"],
     deps =
         if_cuda_is_configured([
             ":device_tracer_cuda",
-        ]) + if_rocm_is_configured([
-            ":device_tracer_rocm",
         ]),
 )
 
