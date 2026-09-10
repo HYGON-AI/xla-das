@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +24,6 @@ limitations under the License.
 
 #include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/log/check.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -309,27 +312,6 @@ std::string PrintDotTestParam(
 class ParametricDotTest : public DotOperationTest,
                           public ::testing::WithParamInterface<DotTestParam> {
  protected:
-  // This method runs before each test runs.
-  bool IsRocm() {
-    return test_runner().HasProperty(HloRunnerPropertyTag::kUsingGpuRocm);
-  }
-
-  void SetUp() override {
-    // Several F16 tests are subject to denormal issues on MI210 architecture.
-    // For that matter, we set propagate_grad_xy_ flag for these tests, which
-    // activates adapted GEMM algorithm on ROCM. Besides, the adapted algorithm
-    // does not work well with ROCBLAS autotuning, hence we also disable it.
-    // This also serves as a test that grad_x/y attributes are correctly
-    // propagated down to a GEMM routine.
-    if (IsRocm()) {
-      absl::string_view name(
-          ::testing::UnitTest::GetInstance()->current_test_info()->name());
-      if (absl::StrContains(name, "TestF16/270x270x520_MajorToMinor")) {
-        GTEST_SKIP() << "Not supported on ROCm until Triton is re-enabled.";
-      }
-    }
-  }
-
   template <typename NativeT>
   void TestImpl();
 

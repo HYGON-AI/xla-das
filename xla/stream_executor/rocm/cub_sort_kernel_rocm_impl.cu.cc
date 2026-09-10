@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +35,8 @@ limitations under the License.
 // Required for sorting Eigen::half and bfloat16.
 namespace rocprim {
 
-#if (TF_ROCM_VERSION >= 50200 && TF_ROCM_VERSION < 70000)
+#if (TF_ROCM_VERSION >= 50200 && TF_ROCM_VERSION < 70000) && \
+    (!defined(ROCPRIM_VERSION) || ROCPRIM_VERSION < 400000)
 namespace detail {
 template <>
 struct float_bit_mask<Eigen::half> {
@@ -56,7 +61,7 @@ template <>
 struct radix_key_codec_base<tsl::bfloat16>
     : radix_key_codec_floating<tsl::bfloat16, uint16_t> {};
 }  // namespace detail
-#else   // TF_ROCM_VERSION >= 70000
+#else
 namespace traits {
 
 template <>
@@ -78,7 +83,7 @@ struct define<tsl::bfloat16> {
 };
 
 }  // namespace traits
-#endif  // TF_ROCM_VERSION >= 50200 && TF_ROCM_VERSION < 70000
+#endif
 
 };  // namespace rocprim
 

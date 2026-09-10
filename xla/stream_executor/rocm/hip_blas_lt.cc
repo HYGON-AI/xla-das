@@ -238,8 +238,6 @@ auto BlasLt::MatmulPlan::GetAlgorithmsForGroupedMatmul(
 
   std::unique_ptr<ActivateContext> activation = blas_lt->parent_->Activate();
 
-  auto problem = grouped_gemm_->getProblemTypesV2()[0];
-
   hipblaslt_ext::GemmPreferenceV2 preference;
   preference.setMaxWorkspaceBytes(max_workspace_size);
 
