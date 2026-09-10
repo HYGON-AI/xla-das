@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "third_party/amd/include/TritonAMDGPUToLLVM/Passes.h"
 #include "third_party/amd/include/TritonAMDGPUTransforms/Passes.h"
+#include "third_party/hcu/include/TritonHCU/Passes.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/IndexToLLVM/IndexToLLVM.h"
@@ -41,12 +42,18 @@ namespace gpu {
 
 namespace mt = ::mlir::triton;
 
+static bool IsHcuArch(
+    const stream_executor::RocmComputeCapability& rocm_cc) {
+  const std::string arch = rocm_cc.gfx_version();
+  return arch == "gfx926" || arch == "gfx928" || arch == "gfx936" ||
+         arch == "gfx938" || arch == "gfx92a";
+}
+
 // Based on make_ttir() in
 // @triton//:third_party/amd/backend/compiler.py
 static void MakeTTIR(mlir::OpPassManager* pm) {
   pm->addPass(mlir::createInlinerPass());
-  // if not amd.supports_tdm(arch)
-  // pm->addPass(mt::createTritonRewriteTensorDescriptorToPointer());
+  pm->addPass(mt::createTritonRewriteTensorDescriptorToPointer());
   pm->addPass(mlir::createCanonicalizerPass());
   pm->addPass(mt::createTritonCombineOps());
   pm->addPass(mt::createTritonReorderBroadcast());
@@ -72,6 +79,7 @@ static bool is_in_thread_transpose_enabled(
 static void MakeTTGIR(mlir::OpPassManager* pm,
                       const stream_executor::RocmComputeCapability& rocm_cc,
                       int num_warps, int num_ctas, int num_stages) {
+  const bool is_hcu = IsHcuArch(rocm_cc);
   pm->addPass(mt::createConvertTritonToTritonGPU(
       {absl::StrCat("hip:", rocm_cc.gfx_version()), num_warps,
        rocm_cc.threads_per_warp(), num_ctas}));
@@ -79,13 +87,24 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
   pm->addPass(mt::gpu::createTritonGPUF32DotTC({false}));
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm->addPass(mt::gpu::createTritonGPUOptimizeThreadLocality());
-  pm->addPass(
-      mlir::createTritonAMDGPUAccelerateMatmul({rocm_cc.gfx_version()}));
+  if (is_hcu) {
+    pm->addPass(mlir::createTritonHCUAccelerateMatmul(
+        {/*archGenerationName=*/rocm_cc.gfx_version(),
+         /*matrixInstructionSize=*/0, /*kPack=*/1,
+         /*mmacLayoutForce=*/-1}));
+  } else {
+    pm->addPass(
+        mlir::createTritonAMDGPUAccelerateMatmul({rocm_cc.gfx_version()}));
+  }
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   // TODO ROCm Check if we want to compare MI100 and greater
   pm->addPass(mlir::createTritonAMDGPUOptimizeEpilogue());
   pm->addPass(mt::amdgpu::createTritonAMDGPUOptimizeDotOperands(
       {rocm_cc.gfx_version()}));
+  if (is_hcu) {
+    pm->addPass(mlir::createTritonHCUMlsEncodingInsertion());
+    pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
+  }
   pm->addNestedPass<mlir::triton::FuncOp>(
       mlir::createTritonAMDGPUHoistLayoutConversions());
   pm->addNestedPass<mlir::triton::FuncOp>(
@@ -100,6 +119,11 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
   bool use_block_pingpong =
       is_pingpong_schedule_enabled(rocm_cc, use_async_copy);
 
+  if (is_hcu) {
+    pm->addPass(mlir::createTritonHCUMlsStreamPipeline(
+        {/*numStages=*/num_stages, /*globalPrefetch=*/0,
+         /*asyncCopySingleBuffer=*/num_stages == 2}));
+  }
   pm->addPass(mlir::createTritonAMDGPUScheduleLoops({num_stages}));
   pm->addPass(
       mlir::createTritonAMDGPUPipeline({use_async_copy, use_block_pingpong}));
@@ -107,9 +131,14 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
     pm->addPass(
         mlir::createTritonAMDGPUCoalesceAsyncCopy({rocm_cc.gfx_version()}));
   }
-  pm->addPass(mlir::createTritonAMDGPUConvertToTensorOps());
+  if (!is_hcu) {
+    pm->addPass(mlir::createTritonAMDGPUConvertToTensorOps());
+  }
   pm->addPass(mlir::createCanonicalizerPass());
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
+  if (is_hcu) {
+    pm->addPass(mlir::createTritonHCUMlsLowering());
+  }
   pm->addPass(mt::gpu::createTritonGPUReduceDataDuplication());
   if (is_in_thread_transpose_enabled(rocm_cc)) {
     pm->addNestedPass<mlir::triton::FuncOp>(
@@ -157,11 +186,18 @@ static void MakeLLIR(mlir::OpPassManager* pm,
   pm->addPass(mt::gpu::createAllocateSharedMemory());
   pm->addPass(mt::gpu::createTritonGPUGlobalScratchAllocationPass());
   pm->addPass(mt::gpu::createTritonGPUGlobalScratchAllocationPass());
-  pm->addPass(
-      mt::createConvertTritonAMDGPUToLLVMPass(rocm_cc.gfx_version(), true));
-  pm->addPass(
-      mlir::triton::AMD::createTritonAMDGPUConvertWarpSpecializeToLLVMPass(
-          rocm_cc.gfx_version()));
+  if (IsHcuArch(rocm_cc)) {
+    pm->addPass(
+        mt::createConvertTritonHCUToLLVMPass(rocm_cc.gfx_version(), true));
+  } else {
+    pm->addPass(
+        mt::createConvertTritonAMDGPUToLLVMPass(rocm_cc.gfx_version(), true));
+  }
+  if (!IsHcuArch(rocm_cc)) {
+    pm->addPass(
+        mlir::triton::AMD::createTritonAMDGPUConvertWarpSpecializeToLLVMPass(
+            rocm_cc.gfx_version()));
+  }
   pm->addPass(mlir::createCanonicalizerPass());
   pm->addPass(mlir::createCSEPass());
   // Note: translateTritonGPUToLLVMIR adds line info with LLVMDIScopePass.

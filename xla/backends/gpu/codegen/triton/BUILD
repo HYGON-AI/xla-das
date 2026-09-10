@@ -1,3 +1,5 @@
+# Modified by Hygon Information Technology Co., Ltd., 2026.
+
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
@@ -182,6 +184,8 @@ cc_library(
         "@triton//:WarpSpecialization",
         "@triton//third_party/amd:TritonAMDGPUToLLVM",
         "@triton//third_party/amd:TritonAMDGPUTransforms",
+        "@triton//third_party/hcu:TritonHCUToLLVM",
+        "@triton//third_party/hcu:TritonHCUTransforms",
         "@triton//third_party/nvidia:NVGPUToLLVM",
         "@triton//third_party/nvidia:NVHopperTransforms",
         "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
