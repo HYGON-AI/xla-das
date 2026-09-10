@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +46,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/str_replace.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -118,6 +123,18 @@ LLD_HAS_DRIVER(elf)
 #include "xla/service/gpu/llvm_gpu_backend/amdgpu_device_lib_data.h"
 #else
 constexpr const char* kAMDGPUDeviceLibData = "";
+#endif
+
+#ifndef XLA_ROCM_ENABLE_GCVM
+#define XLA_ROCM_ENABLE_GCVM 0
+#endif
+
+#ifndef XLA_ROCM_ENABLE_HCU
+#define XLA_ROCM_ENABLE_HCU 1
+#endif
+
+#ifndef HCU_CLANG_PATH
+#define HCU_CLANG_PATH "/opt/dtk/aillvm/bin"
 #endif
 
 namespace xla {
@@ -328,13 +345,21 @@ RegisterSpillInfo ParseAMDGPUMetadataForSpills(llvm::StringRef metadata) {
   // Parse the MsgPack metadata
   llvm::msgpack::Document doc;
   if (!doc.readFromBlob(metadata, /*Multi=*/false)) {
-    VLOG(2) << "Could not parse MsgPack metadata from NT_AMDGPU_METADATA note";
+#if XLA_ROCM_ENABLE_HCU || XLA_ROCM_ENABLE_GCVM
+  VLOG(2) << "Could not parse MsgPack HCU metadata";
+#else
+  VLOG(2) << "Could not parse MsgPack metadata from NT_AMDGPU_METADATA note";
+#endif
     return RegisterSpillInfo{};
   }
 
   llvm::msgpack::DocNode root = doc.getRoot();
   if (!root.isMap()) {
+#if XLA_ROCM_ENABLE_HCU || XLA_ROCM_ENABLE_GCVM
+    VLOG(2) << "HCU metadata root is not a map (unexpected format)";
+#else
     VLOG(2) << "AMDGPU metadata root is not a map (unexpected format)";
+#endif
     return RegisterSpillInfo{};
   }
 
@@ -343,7 +368,11 @@ RegisterSpillInfo ParseAMDGPUMetadataForSpills(llvm::StringRef metadata) {
   auto kernels_it = root_map.find("amdhsa.kernels");
 
   if (kernels_it == root_map.end() || !kernels_it->second.isArray()) {
+#if XLA_ROCM_ENABLE_HCU || XLA_ROCM_ENABLE_GCVM
+    VLOG(2) << "HCU metadata found but missing kernels array";
+#else
     VLOG(2) << "NT_AMDGPU_METADATA found but missing 'amdhsa.kernels' array";
+#endif
     return RegisterSpillInfo{};
   }
 
@@ -500,7 +529,11 @@ RegisterSpillInfo ExtractRegisterSpillingFromHsaco(
             note.getDescAsStringRef(kElfNoteDescAlignment);
 
         if (metadata.empty()) {
+#if XLA_ROCM_ENABLE_HCU || XLA_ROCM_ENABLE_GCVM
+          VLOG(2) << "Found HCU metadata note but it contains no data";
+#else
           VLOG(2) << "Found NT_AMDGPU_METADATA note but it contains no data";
+#endif
           continue;
         }
 
@@ -515,15 +548,365 @@ RegisterSpillInfo ExtractRegisterSpillingFromHsaco(
   }
 
   // If we reach here, no metadata was found
+#if XLA_ROCM_ENABLE_HCU || XLA_ROCM_ENABLE_GCVM
+  VLOG(2) << "No HCU metadata found in HSACO";
+#else
   VLOG(2) << "No AMDGPU metadata found in HSACO";
+#endif
   return RegisterSpillInfo{};
+}
+
+std::string StripLlvmFunctionAttr(std::string ir, absl::string_view attr) {
+  size_t pos = 0;
+  while ((pos = ir.find(attr, pos)) != std::string::npos) {
+    ir.erase(pos, attr.size());
+  }
+  return ir;
+}
+
+std::string StripLlvmRangeAttr(std::string ir) {
+  size_t pos = 0;
+  while ((pos = ir.find(" range(", pos)) != std::string::npos) {
+    size_t close = ir.find(')', pos + 7);
+    if (close == std::string::npos) break;
+    ir.erase(pos, close + 1 - pos);
+  }
+  return ir;
+}
+
+std::string MakeLlvmIrCompatibleWithDtk(std::string ir) {
+  ir = StripLlvmFunctionAttr(std::move(ir), " captures(none)");
+  ir = StripLlvmRangeAttr(std::move(ir));
+  return absl::StrReplaceAll(
+      ir, {{"getelementptr inbounds nuw", "getelementptr inbounds"},
+           {"getelementptr nuw inbounds", "getelementptr inbounds"},
+           {"getelementptr nuw", "getelementptr"},
+           {" nneg ", " "}});
+}
+
+enum class RocmCodegenBackend {
+  kDefault,
+  kGcvm,
+  kHcu,
+};
+
+RocmCodegenBackend GetRocmCodegenBackend(absl::string_view gfx) {
+#if XLA_ROCM_ENABLE_HCU
+  (void)gfx;
+  return RocmCodegenBackend::kHcu;
+#elif XLA_ROCM_ENABLE_GCVM
+  (void)gfx;
+  return RocmCodegenBackend::kGcvm;
+#else
+  (void)gfx;
+  return RocmCodegenBackend::kDefault;
+#endif
+}
+
+bool ShouldUseGcvmCodegen(absl::string_view gfx) {
+  return GetRocmCodegenBackend(gfx) == RocmCodegenBackend::kGcvm;
+}
+
+bool ShouldUseHcuCodegen(absl::string_view gfx) {
+  return GetRocmCodegenBackend(gfx) == RocmCodegenBackend::kHcu;
+}
+
+std::vector<std::string> GetHcuClangSearchPaths() {
+  std::vector<std::string> search_paths;
+  search_paths.push_back(HCU_CLANG_PATH);
+  search_paths.push_back(tsl::io::JoinPath(tsl::RocmRoot(), "aillvm/bin"));
+  return search_paths;
+}
+
+absl::StatusOr<std::string> FindHcuClangTool() {
+  std::vector<std::string> path_storage = GetHcuClangSearchPaths();
+  std::vector<llvm::StringRef> path_refs;
+  path_refs.reserve(path_storage.size());
+  for (const std::string& path : path_storage) {
+    path_refs.push_back(path);
+  }
+  auto program = llvm::sys::findProgramByName("clang", path_refs);
+  if (!program) {
+    return xla::Internal("unable to find HCU clang in [%s]: %s",
+                         absl::StrJoin(path_storage, ", "),
+                         program.getError().message());
+  }
+  return *program;
+}
+
+absl::Status ExecuteHcuClang(absl::string_view step,
+                             const std::string& clang_program,
+                             const std::vector<std::string>& args_storage) {
+  std::vector<llvm::StringRef> args;
+  args.reserve(args_storage.size());
+  for (const std::string& arg : args_storage) {
+    args.push_back(arg);
+  }
+
+  std::string error_message;
+  int result = llvm::sys::ExecuteAndWait(clang_program, args, std::nullopt, {},
+                                         0, 0, &error_message);
+  if (result) {
+    return xla::Internal("HCU clang %s failed: %s, error code %d",
+                         std::string(step), error_message, result);
+  }
+  return absl::OkStatus();
+}
+
+absl::Status CompileModuleToHsacoWithHcu(
+    llvm::Module* module, llvm::TargetMachine* target_machine,
+    absl::string_view gfx, absl::string_view ir_path,
+    absl::string_view asm_path, absl::string_view hsaco_path) {
+  std::string ir;
+  llvm::raw_string_ostream ir_stream(ir);
+  module->setDataLayout(target_machine->createDataLayout());
+  module->print(ir_stream, nullptr);
+  ir_stream.flush();
+  ir = MakeLlvmIrCompatibleWithDtk(std::move(ir));
+
+  std::error_code ec;
+  llvm::raw_fd_ostream ir_fs(llvm_ir::AsStringRef(ir_path), ec,
+                             llvm::sys::fs::OF_None);
+  if (ec) {
+    return xla::Internal("unable to open LLVM IR file %s: %s",
+                         std::string(ir_path), ec.message());
+  }
+  ir_fs << ir;
+  ir_fs.close();
+
+  TF_ASSIGN_OR_RETURN(std::string clang_program, FindHcuClangTool());
+
+  const std::vector<std::string> clang_asm_args{
+      "clang",
+      "-cc1",
+      "-O3",
+      "-x",
+      "ir",
+      "-S",
+      "-triple",
+      "amdgcn-amd-amdhsa",
+      "-target-cpu",
+      std::string(gfx),
+      "-mllvm",
+      "-enable-detailed-clobber-check=true",
+      std::string(ir_path),
+      "-o",
+      std::string(asm_path),
+  };
+  TF_RETURN_IF_ERROR(
+      ExecuteHcuClang("LLVM IR to assembly", clang_program, clang_asm_args));
+
+  const std::vector<std::string> clang_hsaco_args{
+      "clang",
+      "-x",
+      "assembler",
+      "-target",
+      "amdgcn-amd-amdhsa",
+      absl::StrCat("-mcpu=", gfx),
+      std::string(asm_path),
+      "-o",
+      std::string(hsaco_path),
+  };
+  return ExecuteHcuClang("assembly to HSACO", clang_program, clang_hsaco_args);
+}
+
+constexpr int kGcvmSuccess = 0;
+constexpr int kGcvmLlvmIr = 0;
+constexpr int kGcvmHsaco = 2;
+
+using GcvmProgram = void*;
+using GcvmResult = int;
+using GcvmVersionFn = GcvmResult (*)(int*, int*);
+using GcvmCreateProgramFn = GcvmResult (*)(GcvmProgram*);
+using GcvmDestroyProgramFn = GcvmResult (*)(GcvmProgram*);
+using GcvmSetArchFn = GcvmResult (*)(GcvmProgram, const char*);
+using GcvmSetOptLevelFn = GcvmResult (*)(GcvmProgram, int);
+using GcvmAddModuleToProgramFn = GcvmResult (*)(
+    GcvmProgram, const char*, size_t, const char*, int);
+using GcvmCompileProgramFn = GcvmResult (*)(GcvmProgram, int, const char**, int);
+using GcvmGetCompiledResultSizeFn = GcvmResult (*)(GcvmProgram, size_t*);
+using GcvmGetCompiledResultFn = GcvmResult (*)(GcvmProgram, char*);
+
+struct GcvmApi {
+  void* handle = nullptr;
+  GcvmVersionFn version = nullptr;
+  GcvmCreateProgramFn create_program = nullptr;
+  GcvmDestroyProgramFn destroy_program = nullptr;
+  GcvmSetArchFn set_arch = nullptr;
+  GcvmSetOptLevelFn set_opt_level = nullptr;
+  GcvmAddModuleToProgramFn add_module_to_program = nullptr;
+  GcvmCompileProgramFn compile_program = nullptr;
+  GcvmGetCompiledResultSizeFn get_compiled_result_size = nullptr;
+  GcvmGetCompiledResultFn get_compiled_result = nullptr;
+};
+
+absl::Status CheckGcvmResult(GcvmResult result, absl::string_view step) {
+  if (result == kGcvmSuccess) return absl::OkStatus();
+  return xla::Internal("GCVM %s failed with result code %d",
+                       std::string(step), result);
+}
+
+template <typename Fn>
+absl::Status LoadGcvmSymbol(void* handle, const char* symbol_name, Fn* fn) {
+  void* symbol = nullptr;
+  TF_RETURN_IF_ERROR(tsl::Env::Default()->GetSymbolFromLibrary(
+      handle, symbol_name, &symbol));
+  *fn = reinterpret_cast<Fn>(symbol);
+  return absl::OkStatus();
+}
+
+std::vector<std::string> GetGcvmLibraryCandidates() {
+  std::vector<std::string> candidates;
+  auto add = [&](const char* path) {
+    if (path == nullptr || path[0] == '\0') return;
+    candidates.push_back(path);
+  };
+  add(std::getenv("TF_ROCM_GCVM_LIBRARY"));
+
+  const char* gcvm_path = std::getenv("TF_ROCM_GCVM_PATH");
+  if (gcvm_path != nullptr && gcvm_path[0] != '\0') {
+    candidates.push_back(tsl::io::JoinPath(gcvm_path, "libgcvm.so"));
+    candidates.push_back(tsl::io::JoinPath(gcvm_path, "lib/libgcvm.so"));
+  }
+
+  candidates.push_back("/opt/dtk/dcc/gcvm/lib/libgcvm.so");
+  candidates.push_back(
+      tsl::io::JoinPath(tsl::RocmRoot(), "dcc/gcvm/lib/libgcvm.so"));
+  return candidates;
+}
+
+absl::StatusOr<GcvmApi> LoadGcvmApi() {
+  void* handle = nullptr;
+  absl::Status last_status = absl::NotFoundError("no GCVM candidates tried");
+  std::string attempted_paths;
+  for (const std::string& candidate : GetGcvmLibraryCandidates()) {
+    attempted_paths = absl::StrCat(attempted_paths, attempted_paths.empty() ? "" : ", ",
+                                   candidate);
+    last_status =
+        tsl::Env::Default()->LoadDynamicLibrary(candidate.c_str(), &handle);
+    if (last_status.ok()) break;
+  }
+  if (handle == nullptr) {
+    return xla::Internal("unable to load libgcvm.so from [%s]: %s",
+                         attempted_paths, last_status.message());
+  }
+
+  GcvmApi api;
+  api.handle = handle;
+  TF_RETURN_IF_ERROR(LoadGcvmSymbol(handle, "gcvmVersion", &api.version));
+  TF_RETURN_IF_ERROR(
+      LoadGcvmSymbol(handle, "gcvmCreateProgram", &api.create_program));
+  TF_RETURN_IF_ERROR(
+      LoadGcvmSymbol(handle, "gcvmDestroyProgram", &api.destroy_program));
+  TF_RETURN_IF_ERROR(LoadGcvmSymbol(handle, "gcvmSetArch", &api.set_arch));
+  TF_RETURN_IF_ERROR(
+      LoadGcvmSymbol(handle, "gcvmSetOptLevel", &api.set_opt_level));
+  TF_RETURN_IF_ERROR(LoadGcvmSymbol(handle, "gcvmAddModuleToProgram",
+                                    &api.add_module_to_program));
+  TF_RETURN_IF_ERROR(
+      LoadGcvmSymbol(handle, "gcvmCompileProgram", &api.compile_program));
+  TF_RETURN_IF_ERROR(LoadGcvmSymbol(handle, "gcvmGetCompiledResultSize",
+                                    &api.get_compiled_result_size));
+  TF_RETURN_IF_ERROR(LoadGcvmSymbol(handle, "gcvmGetCompiledResult",
+                                    &api.get_compiled_result));
+
+  int major = 0;
+  int minor = 0;
+  TF_RETURN_IF_ERROR(CheckGcvmResult(api.version(&major, &minor),
+                                     "gcvmVersion"));
+  LOG(INFO) << "Loaded GCVM " << major << "." << minor;
+  return api;
+}
+
+absl::StatusOr<GcvmApi*> GetGcvmApi() {
+  static auto* api_or = new absl::StatusOr<GcvmApi>(LoadGcvmApi());
+  if (!api_or->ok()) return api_or->status();
+  return &api_or->value();
+}
+
+class GcvmProgramHandle {
+ public:
+  GcvmProgramHandle(GcvmApi* api, GcvmProgram program)
+      : api_(api), program_(program) {}
+  GcvmProgramHandle(const GcvmProgramHandle&) = delete;
+  GcvmProgramHandle& operator=(const GcvmProgramHandle&) = delete;
+  ~GcvmProgramHandle() {
+    if (program_ != nullptr) {
+      api_->destroy_program(&program_);
+    }
+  }
+  GcvmProgram get() const { return program_; }
+
+ private:
+  GcvmApi* api_;
+  GcvmProgram program_;
+};
+
+absl::Status CompileModuleToHsacoWithGcvm(
+    llvm::Module* module, llvm::TargetMachine* target_machine,
+    absl::string_view gfx, absl::string_view ir_path,
+    absl::string_view hsaco_path) {
+  TF_ASSIGN_OR_RETURN(GcvmApi * api, GetGcvmApi());
+
+  std::string ir;
+  llvm::raw_string_ostream ir_stream(ir);
+  module->setDataLayout(target_machine->createDataLayout());
+  module->print(ir_stream, nullptr);
+  ir_stream.flush();
+  ir = MakeLlvmIrCompatibleWithDtk(std::move(ir));
+
+  std::error_code ec;
+  llvm::raw_fd_ostream ir_fs(llvm_ir::AsStringRef(ir_path), ec,
+                             llvm::sys::fs::OF_None);
+  if (ec) {
+    return xla::Internal("unable to open LLVM IR file %s: %s",
+                         std::string(ir_path), ec.message());
+  }
+  ir_fs << ir;
+  ir_fs.close();
+
+  GcvmProgram raw_program = nullptr;
+  TF_RETURN_IF_ERROR(CheckGcvmResult(api->create_program(&raw_program),
+                                     "gcvmCreateProgram"));
+  GcvmProgramHandle program(api, raw_program);
+
+  TF_RETURN_IF_ERROR(CheckGcvmResult(
+      api->set_arch(program.get(), std::string(gfx).c_str()), "gcvmSetArch"));
+  TF_RETURN_IF_ERROR(
+      CheckGcvmResult(api->set_opt_level(program.get(), 3), "gcvmSetOptLevel"));
+  TF_RETURN_IF_ERROR(CheckGcvmResult(
+      api->add_module_to_program(program.get(), ir.data(), ir.size(),
+                                 std::string(ir_path).c_str(), kGcvmLlvmIr),
+      "gcvmAddModuleToProgram"));
+
+  TF_RETURN_IF_ERROR(CheckGcvmResult(
+      api->compile_program(program.get(), 0, nullptr, kGcvmHsaco),
+      "gcvmCompileProgram"));
+
+  size_t hsaco_size = 0;
+  TF_RETURN_IF_ERROR(CheckGcvmResult(
+      api->get_compiled_result_size(program.get(), &hsaco_size),
+      "gcvmGetCompiledResultSize"));
+  std::vector<char> hsaco(hsaco_size);
+  TF_RETURN_IF_ERROR(CheckGcvmResult(
+      api->get_compiled_result(program.get(), hsaco.data()),
+      "gcvmGetCompiledResult"));
+
+  std::ofstream hsaco_file(std::string(hsaco_path), std::ios::binary);
+  hsaco_file.write(hsaco.data(), hsaco.size());
+  if (hsaco_file.fail()) {
+    return xla::Internal("unable to write GCVM HSACO output file %s",
+                         std::string(hsaco_path));
+  }
+  return absl::OkStatus();
 }
 
 // Emits the given module to HSA Code Object. target_machine is an initialized
 // TargetMachine for the AMDGPU target.
 absl::StatusOr<std::string> EmitModuleToHsaco(
     llvm::Module* module, llvm::TargetMachine* target_machine,
-    const DebugOptions& debug_options) {
+    const DebugOptions& debug_options, absl::string_view gfx,
+    absl::string_view feature_str) {
   auto* env = tsl::Env::Default();
   std::vector<std::string> tempdir_vector;
   env->GetLocalTempDirectories(&tempdir_vector);
@@ -545,23 +928,34 @@ absl::StatusOr<std::string> EmitModuleToHsaco(
   };
 
   std::string ir_path = gen_path(".ll"), ir_opt_path = gen_path("_opt.ll"),
-              isabin_path = gen_path(".o"), hsaco_path = gen_path(".hsaco");
+              asm_path = gen_path(".s"), isabin_path = gen_path(".o"),
+              hsaco_path = gen_path(".hsaco");
 
   absl::Cleanup cleanup = [&] {
     if (!HsacoCache::i().KeepTempFiles()) {
       std::remove(ir_path.c_str());
+      std::remove(asm_path.c_str());
       std::remove(isabin_path.c_str());
       std::remove(ir_opt_path.c_str());
     }
   };
 
   std::error_code ec;
-  {  // Dump LLVM IR.
-    llvm::raw_fd_ostream ir_fs(ir_path, ec, llvm::sys::fs::OF_None);
-    module->print(ir_fs, nullptr);
-  }
+  if (ShouldUseGcvmCodegen(gfx)) {
+    VLOG(1) << "Using GCVM ROCm codegen for " << gfx;
+    TF_RETURN_IF_ERROR(CompileModuleToHsacoWithGcvm(
+        module, target_machine, gfx, ir_path, hsaco_path));
+  } else if (ShouldUseHcuCodegen(gfx)) {
+    VLOG(1) << "Using HCU ROCm codegen for " << gfx;
+    TF_RETURN_IF_ERROR(CompileModuleToHsacoWithHcu(
+        module, target_machine, gfx, ir_path, asm_path, hsaco_path));
+  } else {
+    {  // Dump LLVM IR.
+      llvm::raw_fd_ostream ir_fs(ir_path, ec, llvm::sys::fs::OF_None);
+      module->print(ir_fs, nullptr);
+    }
 
-  {  // Emit GCN ISA binary.
+    // Emit GCN ISA binary.
     llvm::legacy::PassManager pm;
     pm.add(new llvm::TargetLibraryInfoWrapperPass(
         llvm::Triple(module->getTargetTriple())));
@@ -578,7 +972,9 @@ absl::StatusOr<std::string> EmitModuleToHsaco(
     module->print(ir_fs, nullptr);
   }
 
-  if (debug_options.xla_gpu_use_inprocess_lld()) {
+  if (ShouldUseGcvmCodegen(gfx) || ShouldUseHcuCodegen(gfx)) {
+    return hsaco_path;
+  } else if (debug_options.xla_gpu_use_inprocess_lld()) {
 #ifdef HAS_SUPPORT_FOR_LLD_AS_A_LIBRARY
     static absl::Mutex lld_mu(absl::kConstInit);
 
@@ -782,7 +1178,8 @@ absl::StatusOr<amdgpu::HsacoResult> CompileToHsacoInternal(
   // Lower optimized LLVM module to HSA code object.
   TF_ASSIGN_OR_RETURN(
       std::string hsaco_path,
-      EmitModuleToHsaco(module, target_machine.get(), debug_options));
+      EmitModuleToHsaco(module, target_machine.get(), debug_options, gfx,
+                        feature_str));
 
   // Check for register spilling using HSACO metadata
   VLOG(2) << "Checking for register spilling in: "
@@ -976,8 +1373,13 @@ std::vector<std::string> GetAMDGPUBackendOptions(
 
   // Log the final LLVM options
   if (!backend_llvm_opts.empty()) {
+#if XLA_ROCM_ENABLE_HCU || XLA_ROCM_ENABLE_GCVM
+    LOG(INFO) << "HCU backend LLVM options (" << backend_llvm_opts.size()
+              << "):";
+#else
     LOG(INFO) << "AMDGPU backend LLVM options (" << backend_llvm_opts.size()
               << "):";
+#endif
     for (const auto& opt : backend_llvm_opts) {
       LOG(INFO) << "  " << opt;
     }
