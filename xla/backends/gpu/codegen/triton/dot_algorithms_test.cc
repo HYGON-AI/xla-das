@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -718,9 +722,6 @@ CHECK-NOT: mma.sync.aligned.{{.*}}.row.col.f32.tf32.tf32.f32
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
-  if (GpuComputeComp().IsRocm()) {
-    GTEST_SKIP() << "Triton currently disabled on ROCM.";
-  }
   constexpr absl::string_view kHloText = R"(
     HloModule Algorithm_BF16_BF16_F32_X3
 
@@ -741,9 +742,6 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
-  if (GpuComputeComp().IsRocm()) {
-    GTEST_SKIP() << "Triton currently disabled on ROCM.";
-  }
   constexpr absl::string_view kHloText = R"(
     HloModule Algorithm_BF16_BF16_F32_X6
 
@@ -764,9 +762,6 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32) {
-  if (GpuComputeComp().IsRocm()) {
-    GTEST_SKIP() << "Triton currently disabled on ROCM.";
-  }
   constexpr absl::string_view kHloText = R"(
     HloModule Algorithm_TF32_TF32_F32
 
@@ -789,9 +784,6 @@ TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32) {
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
-  if (GpuComputeComp().IsRocm()) {
-    GTEST_SKIP() << "Triton currently disabled on ROCM.";
-  }
   constexpr absl::string_view kHloText = R"(
     HloModule Algorithm_TF32_TF32_F32_X3
 
@@ -814,9 +806,6 @@ TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
 TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32) {
   if (!SupportsBF16(GpuComputeComp())) {
     GTEST_SKIP() << "BF16 not supported.";
-  }
-  if (GpuComputeComp().IsRocm()) {
-    GTEST_SKIP() << "Triton currently disabled on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
     HloModule Algorithm_BF16_BF16_F32
