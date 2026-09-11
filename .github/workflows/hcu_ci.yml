@@ -1,0 +1,162 @@
+# Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+# SPDX-License-Identifier: Apache-2.0
+
+# Organization variables consumed below:
+#   BASE_COMPILE_IMAGE_ROCKY_PY311  base compile image, "<registry>/<repo>:<tag>" 
+#
+# Repositories variables consumed below:
+#   HCU_PYTHON_VERSION              optional, default set to 3.11
+#   JAX_DAS_REPO                    optional, default set to HYGON-AI/jax-das
+#   JAX_DAS_REF                     optional, default set to 0.10.0-das
+#   HCU_DTK_VERSION                 optional, default set to 26.04. The tarball URL is derived from it.
+#
+# Repository secret (internal host, not a public mirror):
+#   HCU_RESOURCE_SERVER_URL         serves ai_cc/Nightly/hcu_llvm_installer.sh
+
+name: CI HCU
+permissions:
+  contents: read
+on:
+  pull_request:
+  push:
+    branches:
+      - jax/0.10.0-das
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/jax/0.10.0-das' }}
+
+jobs:
+  xla:
+    name: XLA Linux x86 HCU
+    runs-on: [self-hosted, bw1100]
+    env: &hcu_env
+      DTK_VERSION: ${{ vars.HCU_DTK_VERSION || '26.04' }}
+      RESOURCE_SERVER_URL: ${{ secrets.HCU_RESOURCE_SERVER_URL }}
+    container: &hcu_container
+      image: ${{ vars.BASE_COMPILE_IMAGE_ROCKY_PY311 }}
+      volumes:
+        - /opt/hyhal:/opt/hyhal:ro
+      options: >-
+        --device=/dev/kfd
+        --device=/dev/mkfd
+        --device=/dev/dri
+        --ipc=host
+        --shm-size=64G
+        --cap-add=SYS_PTRACE
+        --security-opt=seccomp=unconfined
+        --tmpfs /root/.cache/bazel:rw,exec,size=80g
+        --group-add video
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checking out xla-das
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install DTK, HCU LLVM, bazelisk and node
+        run: bash build_tools/hcu/setup_hcu_ci_env.sh
+
+      - name: CPU Info
+        run: lscpu
+
+      - name: HCU info
+        run: |
+          source /opt/dtk/env.sh
+          "${ROCM_PATH:-/opt/dtk}/bin/rocminfo"
+          "${ROCM_PATH:-/opt/dtk}/bin/rocm_agent_enumerator"
+
+      - name: Test XLA [single_gpu]
+        timeout-minutes: 360
+        run: |
+          source /opt/dtk/env.sh
+          bash build_tools/hcu/run_xla_ci_build.sh \
+            --config=hcu \
+            --config=ci_single_gpu \
+            --config=hcu_sgpu \
+            --local_test_jobs=4
+
+      - name: Test XLA [multi_gpu]
+        timeout-minutes: 360
+        run: |
+          source /opt/dtk/env.sh
+          bash build_tools/hcu/run_xla_ci_build.sh \
+            --config=hcu \
+            --config=ci_multi_gpu \
+            --config=hcu_mgpu \
+            --local_test_jobs=1
+
+      - name: Upload XLA test artifacts
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: xla-hcu-test-artifacts-${{ github.run_id }}
+          path: ci_artifacts/
+          retention-days: 7
+
+  jax:
+    if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || github.base_ref == 'dev' }}
+    name: JAX Linux x86 HCU
+    runs-on: [self-hosted, bw1100]
+    env: *hcu_env
+    container: *hcu_container
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checking out xla-das
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: xla-das
+          persist-credentials: false
+
+      - name: Checkout jax-das
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ vars.JAX_DAS_REPO || 'HYGON-AI/jax-das' }}
+          ref: ${{ vars.JAX_DAS_REF || '0.10.0-das' }}
+          path: jax-das
+          persist-credentials: false
+
+      - name: Install DTK, HCU LLVM, bazelisk and node
+        run: bash xla-das/build_tools/hcu/setup_hcu_ci_env.sh
+
+      - name: CPU Info
+        run: lscpu
+
+      - name: HCU info
+        run: |
+          source /opt/dtk/env.sh
+          "${ROCM_PATH:-/opt/dtk}/bin/rocminfo"
+          "${ROCM_PATH:-/opt/dtk}/bin/rocm_agent_enumerator"
+
+      - name: Stage HCU bazel test script into jax-das
+        run: |
+          cp xla-das/build_tools/hcu/run_jax_bazel_test.sh jax-das/ci/
+
+      - name: Test JAX [single_gpu]
+        timeout-minutes: 360
+        working-directory: jax-das
+        env:
+          JAXCI_XLA_GIT_DIR: ${{ github.workspace }}/xla-das
+          JAXCI_HERMETIC_PYTHON_VERSION: ${{ vars.HCU_PYTHON_VERSION || '3.11' }}
+        run: |
+          source /opt/dtk/env.sh
+          bash ci/run_jax_bazel_test.sh \
+            --single_gpu \
+            --//jax:build_jaxlib=wheel \
+            --//jax:build_jax=true \
+            --action_env=JAX_ENABLE_X64=1
+
+      - name: Upload JAX test artifacts
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jax-hcu-bazel-artifacts-${{ github.run_id }}
+          path: jax-das/test-artifacts/
+          retention-days: 7
