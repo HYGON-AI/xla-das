@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 // RUN: fusion_to_mlir %s | emitters_opt -xla-test-optimize |\
 // RUN:   FileCheck %s
 // RUN: gpu_test_correctness %s
@@ -37,9 +41,10 @@ scatter {
 // CHECK:      %[[TH_X:.*]] = gpu.thread_id  x
 
 // CHECK:      %[[SLICE_ID:.*]] = xla.apply_indexing #[[$MAP]](%[[TH_X]]
+// CHECK:      %[[SLICE_ID_C:.*]] = arith.minui %[[SLICE_ID]]
 
 // CHECK:      %[[IND0_I32:.*]] = xla.pure_call @scatter_indices
-// CHECK-SAME:  (%[[OPERAND]], %[[UPDATES]], %[[SLICE_ID]], %[[C0]])
+// CHECK-SAME:  (%[[OPERAND]], %[[UPDATES]], %[[SLICE_ID_C]], %[[C0]])
 
 
 // CHECK:      %[[IND0:.*]] = arith.index_cast %[[IND0_I32]]
