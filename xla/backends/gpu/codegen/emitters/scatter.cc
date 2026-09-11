@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -487,11 +491,14 @@ void EmitNaiveImplementation(ImplicitLocOpBuilder& b,
   Value index_id_in_bounds = b.createOrFold<arith::CmpIOp>(
       arith::CmpIPredicate::ult, thread_id_to_index_id_value,
       arith::ConstantIndexOp::create(b, description.num_slices));
+  Value clamped_index_id = b.createOrFold<arith::MinUIOp>(
+      thread_id_to_index_id_value,
+      arith::ConstantIndexOp::create(b, description.num_slices - 1));
   auto result = EmitUpdateIf(
       b, index_id_in_bounds, {output_tensor},
       [&](ImplicitLocOpBuilder& outer_nested_b) -> SmallVector<Value> {
         SmallVector<Value, 4> update_offsets =
-            helper.ExtractOffsets(outer_nested_b, thread_id_to_index_id_value);
+            helper.ExtractOffsets(outer_nested_b, clamped_index_id);
         int64_t output_rank = description.output_shape.size();
         update_offsets =
             PadWithZeros(update_offsets, output_rank,

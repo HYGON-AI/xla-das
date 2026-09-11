@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2015 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -4334,7 +4338,9 @@ class RocmFusedConvRunner : public dnn::FusedConvRunner {
     CHECK(output_profile_result == nullptr);
 
     miopenStatus_t status;
-#if (TF_ROCM_VERSION >= 70000)
+
+// HCU not support miopenExecuteFusionPlan_v2 now
+#if (TF_ROCM_VERSION >= 70000 && !XLA_ROCM_ENABLE_HCU)
     status = miopenExecuteFusionPlan_v2(
         miopen.handle(), fusion_plan_.fusion_plan_, input_nd_.handle(),
         input_data.opaque(), output_nd_.handle(), output_data.opaque(),

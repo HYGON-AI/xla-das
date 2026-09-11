@@ -742,6 +742,9 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
+  if (GpuComputeComp().IsRocm()) {
+    GTEST_SKIP() << "ALG_DOT_BF16_BF16_F32_X6 not supported on ROCM.";
+  }
   constexpr absl::string_view kHloText = R"(
     HloModule Algorithm_BF16_BF16_F32_X6
 
