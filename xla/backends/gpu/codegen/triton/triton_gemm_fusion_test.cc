@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -2013,7 +2017,11 @@ ENTRY e {
 // is used only.
 TEST_F(CompareTest, UsingOptinSharedMemoryProducesSameResult) {
   if (GpuComputeCapability().IsRocm()) {
+#if XLA_ROCM_ENABLE_HCU
+    GTEST_SKIP() << "No Optin Shared Memory on HCU.";
+#else
     GTEST_SKIP() << "No Optin Shared Memory on AMD.";
+#endif
   }
   const se::DeviceDescription dev_info =
       backend().default_stream_executor()->GetDeviceDescription();

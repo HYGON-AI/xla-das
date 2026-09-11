@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -104,11 +108,19 @@ absl::Status IsDeviceSupported(se::StreamExecutor* executor) {
   } else if (executor->GetPlatform()->id() == se::rocm::kROCmPlatformId) {
     auto rocm_compute_capability = description.rocm_compute_capability();
     if (!rocm_compute_capability.is_supported_gfx_version()) {
-      return Internal(
+#if XLA_ROCM_ENABLE_HCU
+    return Internal(
+          "StreamExecutor ROCM device (%d) is of unsupported HCU version "
+          "'%s' . The supported HCU versions are '%s'.",
+          executor->device_ordinal(), rocm_compute_capability.gfx_version(),
+          rocm_compute_capability.supported_gfx_versions_str());
+#else
+    return Internal(
           "StreamExecutor ROCM device (%d) is of unsupported AMDGPU version "
           "'%s' . The supported AMDGPU versions are '%s'.",
           executor->device_ordinal(), rocm_compute_capability.gfx_version(),
           rocm_compute_capability.supported_gfx_versions_str());
+#endif
     }
   }
   return absl::OkStatus();

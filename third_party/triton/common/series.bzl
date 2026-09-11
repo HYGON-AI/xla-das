@@ -13,25 +13,6 @@ Modified by Hygon Information Technology Co., Ltd., 2026.
 """
 
 common_patch_list = [
-    "//third_party/triton:common/discover_backends.patch",
-    "//third_party/triton:common/mixed_precision_fix.patch",
-    "//third_party/triton:common/mma_limit_pred.patch",
-    "//third_party/triton:common/tc_disabled_kwidth_fix.patch",
-    "//third_party/triton:common/enable_peer_access.patch",
-    "//third_party/triton:common/f8e5m2_conversion.patch",
-    "//third_party/triton:common/no_accelerate_through_broadcast.patch",
-    "//third_party/triton:common/speed_up_int4_unpacking.patch",
-    "//third_party/triton:common/convert_layout_heuristic.patch",
-    "//third_party/triton:common/verify_nvmma_encoding.patch",
-    "//third_party/triton:common/construction_order.patch",
-    "//third_party/triton:common/include_functional.patch",
-    "//third_party/triton:common/launcher.patch",
-    "//third_party/triton:common/avoid-0fc-mid-ptwas-128.patch",
-    "//third_party/triton:common/wgmma_pipeline_fix.patch",
-    "//third_party/triton:common/nvdisasm_bin_path.patch",
-    "//third_party/triton:common/llvm_cl887809531.patch",
-    "//third_party/triton:common/llvm_cl893899241.patch",
-    "//third_party/triton:common/stage_and_cluster_map.patch",
-    "//third_party/triton:common/llvm_cl895542516.patch",
+    "//third_party/triton:common/hcu-adaptation.patch",
     # Add new patches just above this line
 ]

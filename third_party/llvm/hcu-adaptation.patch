@@ -1,3 +1,67 @@
+diff --git a/llvm/include/llvm/IR/Intrinsics.td b/llvm/include/llvm/IR/Intrinsics.td
+--- a/llvm/include/llvm/IR/Intrinsics.td
++++ b/llvm/include/llvm/IR/Intrinsics.td
+@@ -3038,5 +3038,6 @@ include "llvm/IR/IntrinsicsNVVM.td"
+ include "llvm/IR/IntrinsicsMips.td"
+ include "llvm/IR/IntrinsicsAMDGPU.td"
++include "llvm/IR/IntrinsicsHCU.td"
+ include "llvm/IR/IntrinsicsBPF.td"
+ include "llvm/IR/IntrinsicsSystemZ.td"
+ include "llvm/IR/IntrinsicsWebAssembly.td"
+diff --git a/llvm/lib/IR/Intrinsics.cpp b/llvm/lib/IR/Intrinsics.cpp
+--- a/llvm/lib/IR/Intrinsics.cpp
++++ b/llvm/lib/IR/Intrinsics.cpp
+@@ -15,4 +15,5 @@
+ #include "llvm/IR/Function.h"
+ #include "llvm/IR/IntrinsicsAArch64.h"
+ #include "llvm/IR/IntrinsicsAMDGPU.h"
++#include "llvm/IR/IntrinsicsHCU.h"
+ #include "llvm/IR/IntrinsicsARM.h"
+diff --git a/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td b/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td
+--- a/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td
++++ b/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td
+@@ -3311,3 +3311,5 @@ def ROCDL_TargetAttr : ROCDL_Attr<"Target", "target"> {
+   }];
+ }
++
++include "mlir/Dialect/LLVMIR/ROCDLHCUOps.td"
+ #endif // ROCDLIR_OPS
+diff --git a/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp b/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp
+--- a/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp
++++ b/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp
+@@ -19,2 +19,3 @@
+ #include "llvm/IR/IRBuilder.h"
+ #include "llvm/IR/IntrinsicsAMDGPU.h"
++#include "llvm/IR/IntrinsicsHCU.h"
+diff --git a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
+--- a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
++++ b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
+@@ -946,7 +946,11 @@ llvm_target_intrinsics_list = [
+         "name": "AMDGPU",
+         "intrinsic_prefix": "amdgcn",
+     },
++    {
++        "name": "HCU",
++        "intrinsic_prefix": "hcu",
++    },
+     {
+         "name": "ARM",
+         "intrinsic_prefix": "arm",
+     },
+diff --git a/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel b/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
+--- a/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
++++ b/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
+@@ -6558,6 +6558,9 @@ cc_library(
+ td_library(
+     name = "ROCDLOpsTdFiles",
+-    srcs = ["include/mlir/Dialect/LLVMIR/ROCDLOps.td"],
++    srcs = [
++        "include/mlir/Dialect/LLVMIR/ROCDLHCUOps.td",
++        "include/mlir/Dialect/LLVMIR/ROCDLOps.td",
++    ],
+     includes = ["include"],
+     deps = [
+         ":GPUOpsTdFiles",
 diff --git a/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def b/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def
 --- a/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def
 +++ b/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def

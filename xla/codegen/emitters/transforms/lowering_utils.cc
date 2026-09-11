@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,7 +44,11 @@ void EnsureAMDGPUAllocasUseAS5(mlir::Operation* operation) {
       alloca.erase();
     }
   });
+#if XLA_ROCM_ENABLE_HCU
+  VLOG(3) << "Ensured HCU allocas use address space 5";
+#else
   VLOG(3) << "Ensured AMDGPU allocas use address space 5";
+#endif
 }
 
 }  // namespace emitters
