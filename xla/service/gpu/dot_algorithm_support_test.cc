@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -189,8 +193,9 @@ TEST_P(DotAlgorithmSupportTest, AlgorithmIsSupportedFromCudaCapability) {
   }
 
   // CublasLt does not support FP8 fast accumulation.
+  const bool is_cublaslt_target = gpu_cc.cuda_compute_capability() != nullptr;
   DebugOptions debug_options = GetDebugOptionsForTest();
-  if (debug_options.xla_gpu_enable_cublaslt() &&
+  if (debug_options.xla_gpu_enable_cublaslt() && is_cublaslt_target &&
       params.algorithm ==
           PrecisionConfig::ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM &&
       params.lhs_storage_type == F8E4M3FN &&

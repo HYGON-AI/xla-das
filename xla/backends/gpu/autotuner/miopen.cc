@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -420,9 +424,13 @@ MIOpenBackend::GetSupportedConfigs(const HloInstruction& instr) {
     }
 
     if (do_not_autotune_) {
-      ASSIGN_OR_RETURN(auto default_config, GetDefaultConfig(instr));
-      std::vector<std::unique_ptr<BackendConfig>> configs;
-      configs.push_back(std::move(default_config));
+      ASSIGN_OR_RETURN(auto configs,
+                       GetConvolutionCustomCallConfigs(
+                           custom_call_instr, custom_call_instr->GetModule(),
+                           stream_executor(), allocator_, /* stream */ nullptr));
+      if (configs.size() > 1) {
+        configs.resize(1);
+      }
       return std::move(configs);
     }
 

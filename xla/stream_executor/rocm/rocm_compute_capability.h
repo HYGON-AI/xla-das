@@ -194,9 +194,10 @@ class RocmComputeCapability {
     return !IsThisGfxInAnyList(kList);
   }
 
+  static constexpr absl::string_view kHcuBlasLtSeries[] = {"gfx936", "gfx938", "gfx92a"};
   bool has_hipblaslt() const {
     return IsThisGfxInAnyList(kMI300Series, kMI200Series, kGfx12Discrete,
-                              kGfx11Discrete, kGfx11Apu);
+                              kGfx11Discrete, kGfx11Apu, kHcuBlasLtSeries);
   }
 
   bool has_fp8_support() const {
