@@ -1,12 +1,17 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 # SPDX-License-Identifier: Apache-2.0
 
-# Before first use, set the repository variables referenced below:
-#   HCU_CI_IMAGE        e.g. harbor.internal/das/xla-ci
-#   HCU_CI_DIGEST       e.g. sha256:abc123...   (pin by digest, not by tag)
-#   HCU_PYTHON_VERSION  e.g. 3.12
-#   JAX_DAS_REPO        e.g. HYGON-AI/jax-das
-#   JAX_DAS_REF         e.g. 0.10.0-das
+# Organization variables consumed below:
+#   BASE_COMPILE_IMAGE_ROCKY_PY311  base compile image, "<registry>/<repo>:<tag>" 
+#
+# Repositories variables consumed below:
+#   HCU_PYTHON_VERSION              optional, default set to 3.11
+#   JAX_DAS_REPO                    optional, default set to HYGON-AI/jax-das
+#   JAX_DAS_REF                     optional, default set to 0.10.0-das
+#   HCU_DTK_VERSION                 optional, default set to 26.04. The tarball URL is derived from it.
+#
+# Repository secret (internal host, not a public mirror):
+#   HCU_RESOURCE_SERVER_URL         serves ai_cc/Nightly/hcu_llvm_installer.sh
 
 name: CI HCU
 permissions:
@@ -23,32 +28,14 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/jax/0.10.0-das' }}
 
 jobs:
-  hcu-config:
-    runs-on: ubuntu-latest
-    outputs:
-      docker-image: ${{ steps.out.outputs.docker-image }}
-    steps:
-      - id: out
-        shell: bash
-        env:
-          HCU_CI_IMAGE: ${{ vars.HCU_CI_IMAGE }}
-          HCU_CI_DIGEST: ${{ vars.HCU_CI_DIGEST }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${HCU_CI_IMAGE}" || -z "${HCU_CI_DIGEST}" ]]; then
-            echo "::error::Repository variables HCU_CI_IMAGE and HCU_CI_DIGEST must be set." >&2
-            exit 1
-          fi
-          echo "docker-image=${HCU_CI_IMAGE}@${HCU_CI_DIGEST}" >> "$GITHUB_OUTPUT"
-
   xla:
-    needs: hcu-config
     name: XLA Linux x86 HCU
-    runs-on: linux-x86-64-4gpu-hcu
-    env:
-      DOCKER_IMAGE: ${{ needs.hcu-config.outputs.docker-image }}
+    runs-on: [self-hosted, bw1100]
+    env: &hcu_env
+      DTK_VERSION: ${{ vars.HCU_DTK_VERSION || '26.04' }}
+      RESOURCE_SERVER_URL: ${{ secrets.HCU_RESOURCE_SERVER_URL }}
     container: &hcu_container
-      image: ${{ needs.hcu-config.outputs.docker-image }}
+      image: ${{ vars.BASE_COMPILE_IMAGE_ROCKY_PY311 }}
       volumes:
         - /opt/hyhal:/opt/hyhal:ro
       options: >-
@@ -69,6 +56,9 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+
+      - name: Install DTK, HCU LLVM, bazelisk and node
+        run: bash build_tools/hcu/setup_hcu_ci_env.sh
 
       - name: CPU Info
         run: lscpu
@@ -109,12 +99,10 @@ jobs:
           retention-days: 7
 
   jax:
-    needs: hcu-config
     if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || github.base_ref == 'dev' }}
     name: JAX Linux x86 HCU
-    runs-on: linux-x86-64-1gpu-hcu
-    env:
-      DOCKER_IMAGE: ${{ needs.hcu-config.outputs.docker-image }}
+    runs-on: [self-hosted, bw1100]
+    env: *hcu_env
     container: *hcu_container
     defaults:
       run:
@@ -130,9 +118,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ vars.JAX_DAS_REPO || 'HYGON-AI/jax-das' }}
-          ref: ${{ vars.JAX_DAS_REF || 'main' }}
+          ref: ${{ vars.JAX_DAS_REF || '0.10.0-das' }}
           path: jax-das
           persist-credentials: false
+
+      - name: Install DTK, HCU LLVM, bazelisk and node
+        run: bash xla-das/build_tools/hcu/setup_hcu_ci_env.sh
 
       - name: CPU Info
         run: lscpu
@@ -146,12 +137,13 @@ jobs:
       - name: Stage HCU bazel test script into jax-das
         run: |
           cp xla-das/build_tools/hcu/run_jax_bazel_test.sh jax-das/ci/
+
       - name: Test JAX [single_gpu]
         timeout-minutes: 360
         working-directory: jax-das
         env:
           JAXCI_XLA_GIT_DIR: ${{ github.workspace }}/xla-das
-          JAXCI_HERMETIC_PYTHON_VERSION: ${{ vars.HCU_PYTHON_VERSION || '3.12' }}
+          JAXCI_HERMETIC_PYTHON_VERSION: ${{ vars.HCU_PYTHON_VERSION || '3.11' }}
         run: |
           source /opt/dtk/env.sh
           bash ci/run_jax_bazel_test.sh \
