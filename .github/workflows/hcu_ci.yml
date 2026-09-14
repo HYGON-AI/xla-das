@@ -3,15 +3,13 @@
 
 # Organization variables consumed below:
 #   BASE_COMPILE_IMAGE_ROCKY_PY311  base compile image, "<registry>/<repo>:<tag>" 
+#   RESOURCE_SERVER_URL             server resources url
 #
 # Repositories variables consumed below:
 #   HCU_PYTHON_VERSION              optional, default set to 3.11
 #   JAX_DAS_REPO                    optional, default set to HYGON-AI/jax-das
 #   JAX_DAS_REF                     optional, default set to 0.10.0-das
 #   HCU_DTK_VERSION                 optional, default set to 26.04. The tarball URL is derived from it.
-#
-# Repository secret (internal host, not a public mirror):
-#   HCU_RESOURCE_SERVER_URL         serves ai_cc/Nightly/hcu_llvm_installer.sh
 
 name: CI HCU
 permissions:
@@ -33,44 +31,61 @@ jobs:
     runs-on: [self-hosted, bw1100]
     env: &hcu_env
       DTK_VERSION: ${{ vars.HCU_DTK_VERSION || '26.04' }}
-      RESOURCE_SERVER_URL: ${{ secrets.HCU_RESOURCE_SERVER_URL }}
+      RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
     container: &hcu_container
       image: ${{ vars.BASE_COMPILE_IMAGE_ROCKY_PY311 }}
       volumes:
         - /opt/hyhal:/opt/hyhal:ro
       options: >-
+        --privileged
+        --user root
         --device=/dev/kfd
         --device=/dev/mkfd
         --device=/dev/dri
+        --group-add video
         --ipc=host
         --shm-size=64G
         --cap-add=SYS_PTRACE
         --security-opt=seccomp=unconfined
         --tmpfs /root/.cache/bazel:rw,exec,size=80g
-        --group-add video
     defaults:
       run:
         shell: bash
     steps:
-      - name: Checking out xla-das
+      - &check_docker
+        name: Check Docker environment
+        run: |
+          if [ -f /.dockerenv ] || [ -f /run/.containerenv ] ||
+             grep -qaE '(docker|containerd|kubepods|libpod)' /proc/1/cgroup 2>/dev/null; then
+            echo "Docker environment detected on $(hostname), continue."
+          else
+            echo "::error::This job must run inside the HCU Docker container, but no Docker environment was detected on $(hostname). Aborting."
+            exit 1
+          fi
+
+      - &checkout_xla
+        name: Checking out xla-das
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          path: xla-das
           persist-credentials: false
-
-      - name: Install DTK, HCU LLVM, bazelisk and node
+      
+      - &install_env
+        name: Install DTK, HCU LLVM, bazelisk and node
+        working-directory: xla-das
         run: bash build_tools/hcu/setup_hcu_ci_env.sh
 
-      - name: CPU Info
-        run: lscpu
-
-      - name: HCU info
+      - &device_info
+        name: Device info
         run: |
+          lscpu
           source /opt/dtk/env.sh
           "${ROCM_PATH:-/opt/dtk}/bin/rocminfo"
           "${ROCM_PATH:-/opt/dtk}/bin/rocm_agent_enumerator"
 
       - name: Test XLA [single_gpu]
         timeout-minutes: 360
+        working-directory: xla-das
         run: |
           source /opt/dtk/env.sh
           bash build_tools/hcu/run_xla_ci_build.sh \
@@ -81,6 +96,7 @@ jobs:
 
       - name: Test XLA [multi_gpu]
         timeout-minutes: 360
+        working-directory: xla-das
         run: |
           source /opt/dtk/env.sh
           bash build_tools/hcu/run_xla_ci_build.sh \
@@ -95,7 +111,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: xla-hcu-test-artifacts-${{ github.run_id }}
-          path: ci_artifacts/
+          path: xla-das/ci_artifacts/
           retention-days: 7
 
   jax:
@@ -108,11 +124,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Checking out xla-das
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          path: xla-das
-          persist-credentials: false
+      - *check_docker
+      - *checkout_xla
 
       - name: Checkout jax-das
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -122,17 +135,8 @@ jobs:
           path: jax-das
           persist-credentials: false
 
-      - name: Install DTK, HCU LLVM, bazelisk and node
-        run: bash xla-das/build_tools/hcu/setup_hcu_ci_env.sh
-
-      - name: CPU Info
-        run: lscpu
-
-      - name: HCU info
-        run: |
-          source /opt/dtk/env.sh
-          "${ROCM_PATH:-/opt/dtk}/bin/rocminfo"
-          "${ROCM_PATH:-/opt/dtk}/bin/rocm_agent_enumerator"
+      - *install_env
+      - *device_info
 
       - name: Stage HCU bazel test script into jax-das
         run: |
