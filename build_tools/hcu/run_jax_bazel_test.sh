@@ -138,6 +138,15 @@ else
     )
 fi
 
+HIPBLASLT_ENV_FILE="${DTK_DIR}/env.hipblaslt"
+if [[ -z "${HIPBLASLT_TENSILE_LIBPATH:-}" && -f "${HIPBLASLT_ENV_FILE}" ]]; then
+    source "${HIPBLASLT_ENV_FILE}"
+fi
+HIPBLASLT_TEST_ENV_ARGS=()
+if [[ -n "${HIPBLASLT_TENSILE_LIBPATH:-}" ]]; then
+    HIPBLASLT_TEST_ENV_ARGS+=("--test_env=HIPBLASLT_TENSILE_LIBPATH=${HIPBLASLT_TENSILE_LIBPATH}")
+fi
+
 # Don't abort before the test XMLs are collected.
 set +e
 
@@ -171,6 +180,7 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --spawn_strategy=local \
     --strategy=TestRunner=local \
     --color=yes \
+    "${HIPBLASLT_TEST_ENV_ARGS[@]}" \
     "${MODE_ARGS[@]}" \
     "${BAZEL_ARGS[@]}" \
     -- \

@@ -85,6 +85,15 @@ mkdir -p "${PROFILE_DIR}"
 
 cd "${WORKSPACE_DIR}"
 
+HIPBLASLT_ENV_FILE="${DTK_DIR}/env.hipblaslt"
+if [[ -z "${HIPBLASLT_TENSILE_LIBPATH:-}" && -f "${HIPBLASLT_ENV_FILE}" ]]; then
+    source "${HIPBLASLT_ENV_FILE}"
+fi
+TEST_ENV_ARGS=()
+if [[ -n "${HIPBLASLT_TENSILE_LIBPATH:-}" ]]; then
+    TEST_ENV_ARGS+=("--test_env=HIPBLASLT_TENSILE_LIBPATH=${HIPBLASLT_TENSILE_LIBPATH}")
+fi
+
 bazel --bazelrc="${SCRIPT_DIR}/hcu_xla.bazelrc" test \
     --config=hcu_test \
     --build_tag_filters="${TAG_FILTERS}" \
@@ -97,6 +106,7 @@ bazel --bazelrc="${SCRIPT_DIR}/hcu_xla.bazelrc" test \
     --curses=no \
     --color=yes \
     "${TEST_FILTER_ARG[@]}" \
+    "${TEST_ENV_ARGS[@]}" \
     "${PASSTHROUGH_ARGS[@]}" \
     --repo_env=ROCM_PATH="${DTK_DIR}" \
     --action_env=ROCM_PATH="${DTK_DIR}" \
