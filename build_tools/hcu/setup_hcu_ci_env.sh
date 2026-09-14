@@ -29,6 +29,11 @@ DTK_DIR="${DTK_DIR:-/opt/dtk}"
 BAZELISK_VERSION="${BAZELISK_VERSION:-1.28.1}"
 NODE_VERSION="${NODE_VERSION:-26.7.0}"
 
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: must run as root, current user id is $(id -u)." >&2
+    exit 1
+fi
+
 if [[ -z "${RESOURCE_SERVER_URL}" ]]; then
     echo "ERROR: RESOURCE_SERVER_URL is empty, set the HCU_RESOURCE_SERVER_URL secret." >&2
     exit 1
