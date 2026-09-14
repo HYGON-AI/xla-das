@@ -20,6 +20,8 @@
 #   AILLVM_MAJOR          26.04 -> 1.0.0, 26.04.2 and later -> 2.0.0
 #   BAZELISK_VERSION      defaults to 1.28.1
 #   NODE_VERSION          defaults to 26.7.0
+#   FORCE_REINSTALL_DTK   1 -> reinstall DTK even if its stamp matches
+#   FORCE_REINSTALL_LLVM  1 -> reinstall HCU LLVM even if its stamp matches
 
 set -euo pipefail
 
@@ -55,7 +57,30 @@ echo "DTK ${DTK_VERSION} -> HCU LLVM major ${AILLVM_MAJOR}"
 
 WGET_OPTS=(--timeout=30 --tries=3 -q)
 
+FORCE_REINSTALL_DTK="${FORCE_REINSTALL_DTK:-0}"
+FORCE_REINSTALL_LLVM="${FORCE_REINSTALL_LLVM:-0}"
+
+stamp_matches() {
+    local stamp="$1" value="$2" force="$3"
+    [[ "${force}" != "1" ]] &&
+        [[ -f "${stamp}" ]] &&
+        [[ "$(cat "${stamp}")" == "${value}" ]]
+}
+
 install_dtk() {
+    local stamp="${DTK_DIR}/.dtk-version"
+    local installed
+    installed=$(cat "${stamp}" 2>/dev/null || true)
+
+    if stamp_matches "${stamp}" "${DTK_VERSION}" "${FORCE_REINSTALL_DTK}"; then
+        echo "DTK ${DTK_VERSION} already installed in ${DTK_DIR}, skipping download."
+        return 0
+    fi
+
+    if [[ -n "${installed}" ]]; then
+        rm -rf "${DTK_DIR:?}"/*
+    fi
+
     local url="https://download.sourcefind.cn:65024/file/1/DTK-${DTK_VERSION}/Rocky8.6/DTK-${DTK_VERSION}-Rocky8.6-x86_64.tar.gz"
 
     wget "${WGET_OPTS[@]}" "${url}" -O /tmp/dtk.tar.gz
@@ -67,9 +92,25 @@ install_dtk() {
         echo "ERROR: ${DTK_DIR}/env.sh missing after extraction." >&2
         exit 1
     fi
+
+    printf '%s\n' "${DTK_VERSION}" > "${stamp}"
 }
 
 install_aillvm() {
+    local stamp="${DTK_DIR}/aillvm/.aillvm-major"
+    local installed
+    installed=$(cat "${stamp}" 2>/dev/null || true)
+
+    if stamp_matches "${stamp}" "${AILLVM_MAJOR}" "${FORCE_REINSTALL_LLVM}" &&
+        [[ -x "${DTK_DIR}/aillvm/bin/clang" ]]; then
+        echo "HCU LLVM ${AILLVM_MAJOR} already installed, skipping installer."
+        return 0
+    fi
+
+    if [[ -d "${DTK_DIR}/aillvm" ]]; then
+        rm -rf "${DTK_DIR}/aillvm"
+    fi
+
     wget "${WGET_OPTS[@]}" --no-check-certificate "${RESOURCE_SERVER_URL%/}/ai_cc/Nightly/hcu_llvm_installer.sh" -O /tmp/hcu_llvm_installer.sh
     chmod +x /tmp/hcu_llvm_installer.sh
     bash /tmp/hcu_llvm_installer.sh --major "${AILLVM_MAJOR}"
@@ -79,6 +120,8 @@ install_aillvm() {
         echo "ERROR: ${DTK_DIR}/aillvm/bin/clang missing after HCU LLVM install." >&2
         exit 1
     fi
+
+    printf '%s\n' "${AILLVM_MAJOR}" > "${stamp}"
 }
 
 install_bazelisk() {
@@ -101,15 +144,11 @@ install_node() {
 }
 
 detect_hcu_arch() {
-    local tool arch=""
-    for tool in "${DTK_DIR}/bin/rocm_agent_enumerator" "${DTK_DIR}/bin/rocminfo"; do
-        [[ -x "${tool}" ]] || continue
-        arch=$("${tool}" 2>/dev/null \
-            | grep -oE 'gfx[0-9a-f]+' \
-            | grep -v '^gfx000$' \
-            | head -n1) || arch=""
-        [[ -n "${arch}" ]] && break
-    done
+    local arch=""
+    arch=$("${DTK_DIR}/bin/rocminfo" 2>/dev/null \
+        | grep -oE 'gfx[0-9a-f]+' \
+        | grep -v '^gfx000$' \
+        | head -n1) || arch=""
     printf '%s\n' "${arch}"
 }
 

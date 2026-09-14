@@ -10,6 +10,8 @@
 #   JAX_DAS_REPO                    optional, default set to HYGON-AI/jax-das
 #   JAX_DAS_REF                     optional, default set to 0.10.0-das
 #   HCU_DTK_VERSION                 optional, default set to 26.04. The tarball URL is derived from it.
+#   HCU_FORCE_REINSTALL_DTK         optional, default set to 0. Reinstall DTK during setup.
+#   HCU_FORCE_REINSTALL_LLVM        optional, default set to 0. Reinstall HCU LLVM during setup.
 
 name: CI HCU
 permissions:
@@ -31,11 +33,15 @@ jobs:
     runs-on: [self-hosted, bw1100]
     env: &hcu_env
       DTK_VERSION: ${{ vars.HCU_DTK_VERSION || '26.04' }}
+      FORCE_REINSTALL_DTK: ${{ vars.HCU_FORCE_REINSTALL_DTK || '0' }}
+      FORCE_REINSTALL_LLVM: ${{ vars.HCU_FORCE_REINSTALL_LLVM || '0' }}
       RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
     container: &hcu_container
       image: ${{ vars.BASE_COMPILE_IMAGE_ROCKY_PY311 }}
       volumes:
         - /opt/hyhal:/opt/hyhal:ro
+        - /opt/ci-cache/xla-das/bazel:/root/.cache/bazel
+        - "/opt/ci-cache/dtk/${{ vars.HCU_DTK_VERSION || '26.04' }}:/opt/dtk"
       options: >-
         --privileged
         --user root
@@ -47,7 +53,6 @@ jobs:
         --shm-size=64G
         --cap-add=SYS_PTRACE
         --security-opt=seccomp=unconfined
-        --tmpfs /root/.cache/bazel:rw,exec,size=80g
     defaults:
       run:
         shell: bash
