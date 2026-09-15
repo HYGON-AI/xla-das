@@ -17,7 +17,7 @@
 #                         Injected from a repository secret, no default here.
 # Optional:
 #   DTK_DIR               install prefix, defaults to /opt/dtk
-#   AILLVM_MAJOR          26.04 -> 1.0.0, 26.04.2 and later -> 2.0.0
+#   AILLVM_MAJOR          26.04 -> 1.0.0, 26.10 and later -> 2.0.0
 #   BAZELISK_VERSION      defaults to 1.28.1
 #   NODE_VERSION          defaults to 26.7.0
 #   FORCE_REINSTALL_DTK   1 -> reinstall DTK even if its stamp matches
@@ -51,8 +51,8 @@ fi
 
 derive_aillvm_major() {
     local lowest
-    lowest=$(printf '%s\n%s\n' "${DTK_VERSION}" "26.04.2" | sort -V | head -n1)
-    if [[ "${lowest}" == "26.04.2" ]]; then
+    lowest=$(printf '%s\n%s\n' "${DTK_VERSION}" "26.10" | sort -V | head -n1)
+    if [[ "${lowest}" == "26.10" ]]; then
         echo "2.0.0"
     else
         echo "1.0.0"

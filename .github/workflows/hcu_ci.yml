@@ -7,8 +7,8 @@
 #
 # Repositories variables consumed below:
 #   HCU_PYTHON_VERSION              optional, default set to 3.11
-#   JAX_DAS_REPO                    optional, default set to HYGON-AI/jax-das
-#   JAX_DAS_REF                     optional, default set to 0.10.0-das
+#   HCU_JAX_DAS_REPO                optional, default set to HYGON-AI/jax-das
+#   HCU_JAX_DAS_REF                 optional, default set to v0.10.0-das
 #   HCU_DTK_VERSION                 optional, default set to 26.04. The tarball URL is derived from it.
 #   HCU_FORCE_REINSTALL_DTK         optional, default set to 0. Reinstall DTK during setup.
 #   HCU_FORCE_REINSTALL_LLVM        optional, default set to 0. Reinstall HCU LLVM during setup.
@@ -141,8 +141,8 @@ jobs:
       - name: Checkout jax-das
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          repository: ${{ vars.JAX_DAS_REPO || 'HYGON-AI/jax-das' }}
-          ref: ${{ vars.JAX_DAS_REF || '0.10.0-das' }}
+          repository: ${{ vars.HCU_JAX_DAS_REPO || 'HYGON-AI/jax-das' }}
+          ref: ${{ vars.HCU_JAX_DAS_REF || 'v0.10.0-das' }}
           path: jax-das
           persist-credentials: false
 
