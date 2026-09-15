@@ -24,7 +24,7 @@
 
 ## 构建指导
 
-本项目不单独构建，而是在 jax 中一并构建，[jax 构建指导](https://github.com/HYGON-AI/jax-das/blob/0.10.0-das/docs/das/BUILDING.md)。
+本项目不单独构建，而是在 jax 中一并构建，[jax 构建指导](https://github.com/HYGON-AI/jax-das/blob/v0.10.0-das/docs/das/BUILDING.md)。
 
 ## 已知问题
 

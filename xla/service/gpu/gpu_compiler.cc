@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -3433,7 +3437,10 @@ GpuCompiler::GetAutotunerBackends(
     // CUBLAS and CUBLASLT both to be available. TODO: fix tests and uncomment.
     // disabled_autotune_backends.push_back(autotuner::Backend::CUBLAS);
     disabled_autotune_backends.push_back(autotuner::Backend::CUBLAS_FISSION);
-    disabled_autotune_backends.push_back(autotuner::Backend::ROCBLAS_FISSION);
+    if (target_config->device_description.gpu_compute_capability()
+            .cuda_compute_capability() != nullptr) {
+      disabled_autotune_backends.push_back(autotuner::Backend::ROCBLAS_FISSION);
+    }
   }
 
   autotune_backends.erase(
