@@ -15,7 +15,20 @@ name: CI HCU
 permissions:
   contents: read
 on:
-  pull_request:
+  pull_request_target:
+    branches:
+      - jax/0.10.0-das
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "xla/**"
+      - "third_party/gpus/**"
+      - "third_party/llvm/**"
+      - "third_party/triton/**"
+      - "BUILD.bazel"
+      - "MODULE.bazel"
+      - "WORKSPACE"
+      - ".bazelrc"
+      - ".github/workflows/hcu_ci.yml"
   push:
     branches:
       - jax/0.10.0-das
@@ -67,6 +80,8 @@ jobs:
         name: Checking out xla-das
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: xla-das
           persist-credentials: false
       

@@ -36,7 +36,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 if [[ -z "${RESOURCE_SERVER_URL}" ]]; then
-    echo "ERROR: RESOURCE_SERVER_URL is empty, set the HCU_RESOURCE_SERVER_URL secret." >&2
+    echo "ERROR: RESOURCE_SERVER_URL is empty, set the RESOURCE_SERVER_URL vars." >&2
     exit 1
 fi
 
