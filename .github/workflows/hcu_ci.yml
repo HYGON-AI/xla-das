@@ -39,8 +39,18 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/jax/0.10.0-das' }}
 
 jobs:
+  manual_approval:
+    name: Manual Approval for CI
+    runs-on: ubuntu-latest
+    environment: ci-protection
+    if: ${{ github.event_name == 'pull_request_target' }}
+    steps:
+      - run: echo "Waiting for approval..."
+
   xla:
     name: XLA Linux x86 HCU
+    needs: [manual_approval]
+    if: ${{ always() && (needs.manual_approval.result == 'success' || needs.manual_approval.result == 'skipped') }}
     runs-on: [self-hosted, bw1100]
     env: &hcu_env
       DTK_VERSION: ${{ vars.HCU_DTK_VERSION || '26.04' }}
@@ -80,8 +90,7 @@ jobs:
         name: Checking out xla-das
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/head', github.event.pull_request.number) || github.sha }}
           path: xla-das
           persist-credentials: false
       
@@ -129,8 +138,9 @@ jobs:
           retention-days: 7
 
   jax:
-    if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || github.base_ref == 'dev' }}
     name: JAX Linux x86 HCU
+    needs: [manual_approval]
+    if: ${{ always() && (needs.manual_approval.result == 'success' || needs.manual_approval.result == 'skipped')}}
     runs-on: [self-hosted, bw1100]
     env: *hcu_env
     container: *hcu_container
