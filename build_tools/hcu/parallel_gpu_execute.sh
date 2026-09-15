@@ -41,24 +41,24 @@ function rlocation() {
     echo "$TEST_SRCDIR/$1"
   elif [[ -e "$RUNFILES_MANIFEST_FILE" ]]; then
     # If a runfiles manifest file exists then use it.
-    echo "$(grep "^$1 " "$RUNFILES_MANIFEST_FILE" | sed 's/[^ ]* //')"
+    grep "^$1 " "$RUNFILES_MANIFEST_FILE" | sed 's/[^ ]* //'
   fi
 }
 
-TEST_BINARY="$(rlocation $TEST_WORKSPACE/${1#./})"
+TEST_BINARY="$(rlocation "$TEST_WORKSPACE"/"${1#./}")"
 shift
 
 mkdir -p /var/lock
-for j in `seq 0 $((TF_TESTS_PER_GPU-1))`; do
-  for i in `seq 0 $((TF_GPU_COUNT-1))`; do
-    exec {lock_fd}>/var/lock/gpulock${i}_${j} || exit 1
+for j in $(seq 0 $((TF_TESTS_PER_GPU-1))); do
+  for i in $(seq 0 $((TF_GPU_COUNT-1))); do
+    exec {lock_fd}>"/var/lock/gpulock${i}_${j}" || exit 1
     if flock -n "$lock_fd";
     then
       (
         export CUDA_VISIBLE_DEVICES=$i
         export HIP_VISIBLE_DEVICES=$i
         echo "Running test $TEST_BINARY $* on HCU $HIP_VISIBLE_DEVICES"
-        "$TEST_BINARY" $@
+        "$TEST_BINARY" "$@"
       )
       return_code=$?
       flock -u "$lock_fd"

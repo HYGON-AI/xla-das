@@ -12,6 +12,9 @@
 #   HCU_DTK_VERSION                 optional, default set to 26.04. The tarball URL is derived from it.
 #   HCU_FORCE_REINSTALL_DTK         optional, default set to 0. Reinstall DTK during setup.
 #   HCU_FORCE_REINSTALL_LLVM        optional, default set to 0. Reinstall HCU LLVM during setup.
+#   HCU_FORCE_CLEAN_BAZEL_CACHE     optional, default set to 0. Wipe the mounted bazel cache
+#   HCU_BAZEL_CACHE_DIR             optional, default set /root/.cache/bazel
+#   HCU_BAZEL_CACHE_MAX_GB          optional, default set 100 GB
 
 name: CI HCU
 permissions:
@@ -35,13 +38,16 @@ jobs:
       DTK_VERSION: ${{ vars.HCU_DTK_VERSION || '26.04' }}
       FORCE_REINSTALL_DTK: ${{ vars.HCU_FORCE_REINSTALL_DTK || '0' }}
       FORCE_REINSTALL_LLVM: ${{ vars.HCU_FORCE_REINSTALL_LLVM || '0' }}
+      FORCE_CLEAN_BAZEL_CACHE: ${{ vars.HCU_FORCE_CLEAN_BAZEL_CACHE || '0' }}
+      BAZEL_CACHE_DIR: ${{ vars.HCU_BAZEL_CACHE_DIR || '/root/.cache/bazel' }}
+      BAZEL_CACHE_MAX_GB: ${{ vars.HCU_BAZEL_CACHE_MAX_GB || '100' }}
       RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
     container: &hcu_container
       image: ${{ vars.BASE_COMPILE_IMAGE_ROCKY_PY311 }}
       volumes:
-        - /opt/hyhal:/opt/hyhal:ro
-        - /opt/ci-cache/xla-das/bazel:/root/.cache/bazel
-        - "/opt/ci-cache/dtk/${{ vars.HCU_DTK_VERSION || '26.04' }}:/opt/dtk"
+        - "/opt/hyhal:/opt/hyhal:ro"
+        - "$HOME/xla-ci-cache/bazel:/root/.cache/bazel"
+        - "$HOME/xla-ci-cache/dtk/${{ vars.HCU_DTK_VERSION || '26.04' }}:/opt/dtk"
       options: >-
         --privileged
         --user root
@@ -86,7 +92,6 @@ jobs:
           lscpu
           source /opt/dtk/env.sh
           "${ROCM_PATH:-/opt/dtk}/bin/rocminfo"
-          "${ROCM_PATH:-/opt/dtk}/bin/rocm_agent_enumerator"
           ls -l "${ROCM_PATH:-/opt/dtk}/lib/hipblaslt/"
 
       - name: Test XLA [single_gpu]

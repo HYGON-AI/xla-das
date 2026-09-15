@@ -22,6 +22,9 @@
 #   NODE_VERSION          defaults to 26.7.0
 #   FORCE_REINSTALL_DTK   1 -> reinstall DTK even if its stamp matches
 #   FORCE_REINSTALL_LLVM  1 -> reinstall HCU LLVM even if its stamp matches
+#   BAZEL_CACHE_DIR       bazel cache mount, defaults to /root/.cache/bazel
+#   BAZEL_CACHE_MAX_GB    wipe the cache above this size, defaults to 100
+#   FORCE_CLEAN_BAZEL_CACHE    1 -> wipe the cache regardless of its size
 
 set -euo pipefail
 
@@ -31,6 +34,10 @@ DTK_DIR="${DTK_DIR:-/opt/dtk}"
 
 BAZELISK_VERSION="${BAZELISK_VERSION:-1.28.1}"
 NODE_VERSION="${NODE_VERSION:-26.7.0}"
+
+BAZEL_CACHE_DIR="${BAZEL_CACHE_DIR:-/root/.cache/bazel}"
+BAZEL_CACHE_MAX_GB="${BAZEL_CACHE_MAX_GB:-100}"
+FORCE_CLEAN_BAZEL_CACHE="${FORCE_CLEAN_BAZEL_CACHE:-0}"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "ERROR: must run as root, current user id is $(id -u)." >&2
@@ -65,6 +72,42 @@ stamp_matches() {
     [[ "${force}" != "1" ]] &&
         [[ -f "${stamp}" ]] &&
         [[ "$(cat "${stamp}")" == "${value}" ]]
+}
+
+bazel_cache_size_gb() {
+    local size_mb
+    size_mb=$(du -sm "${BAZEL_CACHE_DIR}" 2>/dev/null | awk '{print $1}')
+    echo "$((${size_mb:-0} / 1024))"
+}
+
+wipe_bazel_cache() {
+    if ! find "${BAZEL_CACHE_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; then
+        echo "WARNING: not every entry in ${BAZEL_CACHE_DIR} could be removed." >&2
+    fi
+}
+
+prepare_bazel_cache() {
+    local size_gb
+
+    if [[ ! -d "${BAZEL_CACHE_DIR}" ]]; then
+        echo "Bazel cache ${BAZEL_CACHE_DIR} does not exist yet, nothing to clean."
+        return 0
+    fi
+
+    if [[ "${FORCE_CLEAN_BAZEL_CACHE}" == "1" ]]; then
+        echo "FORCE_CLEAN_BAZEL_CACHE=1, wiping the bazel cache in ${BAZEL_CACHE_DIR}."
+        wipe_bazel_cache
+        return 0
+    fi
+
+    size_gb=$(bazel_cache_size_gb)
+    if ((size_gb > BAZEL_CACHE_MAX_GB)); then
+        echo "Bazel cache ${BAZEL_CACHE_DIR} is ${size_gb}G, past BAZEL_CACHE_MAX_GB=${BAZEL_CACHE_MAX_GB}G, wiping it."
+        wipe_bazel_cache
+        return 0
+    fi
+
+    echo "Bazel cache ${BAZEL_CACHE_DIR} is ${size_gb}G, keeping it (limit ${BAZEL_CACHE_MAX_GB}G)."
 }
 
 install_dtk() {
@@ -227,11 +270,13 @@ install_dtk
 install_aillvm
 install_bazelisk
 install_node
+prepare_bazel_cache
 pin_hipblaslt_tensile_libpath
 
 echo "HCU CI environment ready:"
-echo "  DTK        ${DTK_DIR}"
-echo "  HCU LLVM   ${DTK_DIR}/aillvm (${AILLVM_MAJOR})"
-echo "  bazel      $(command -v bazel) (bazelisk ${BAZELISK_VERSION})"
-echo "  node       $(/usr/local/node/bin/node --version)"
-echo "  hipblaslt  ${HIPBLASLT_TENSILE_LIBPATH:-<not pinned>}"
+echo "  DTK         ${DTK_DIR}"
+echo "  HCU LLVM    ${DTK_DIR}/aillvm (${AILLVM_MAJOR})"
+echo "  bazel       $(command -v bazel) (bazelisk ${BAZELISK_VERSION})"
+echo "  node        $(/usr/local/node/bin/node --version)"
+echo "  bazel cache ${BAZEL_CACHE_DIR} (wipe above ${BAZEL_CACHE_MAX_GB}G or when forced)"
+echo "  hipblaslt   ${HIPBLASLT_TENSILE_LIBPATH:-<not pinned>}"
