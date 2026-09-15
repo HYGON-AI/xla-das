@@ -145,7 +145,7 @@ pin_hipblaslt_tensile_libpath() {
     local arch
     arch=$(detect_hcu_arch)
     if [[ -z "${arch}" ]]; then
-        echo "ERROR: cannot detect an HCU arch (gfx*) with rocm_agent_enumerator or rocminfo in ${DTK_DIR}/bin." >&2
+        echo "ERROR: cannot detect an HCU with rocminfo in ${DTK_DIR}/bin." >&2
         list_tensile_libpaths >&2
         echo "       Set HIPBLASLT_TENSILE_LIBPATH explicitly to override." >&2
         exit 1

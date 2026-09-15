@@ -28,4 +28,4 @@ TAG_FILTERS=(
     -oss_serial
 )
 
-echo $(IFS=, ; echo "${TAG_FILTERS[*]}")
+(IFS=,; echo "${TAG_FILTERS[*]}")
