@@ -143,11 +143,17 @@ pin_hipblaslt_tensile_libpath() {
     fi
 
     local arch
-    arch=$(detect_hcu_arch)
+    arch=$(
+        set +u
+        source "${DTK_DIR}/env.sh"
+        detect_hcu_arch
+        set -u
+    ) || {
+        echo "ERROR: Command substitution failed with exit code $?" >&2
+        exit 1
+    }
     if [[ -z "${arch}" ]]; then
         echo "ERROR: cannot detect an HCU with rocminfo in ${DTK_DIR}/bin." >&2
-        list_tensile_libpaths >&2
-        echo "       Set HIPBLASLT_TENSILE_LIBPATH explicitly to override." >&2
         exit 1
     fi
     echo "HCU device arch: ${arch}"
