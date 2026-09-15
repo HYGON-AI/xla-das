@@ -82,6 +82,7 @@ jobs:
           source /opt/dtk/env.sh
           "${ROCM_PATH:-/opt/dtk}/bin/rocminfo"
           "${ROCM_PATH:-/opt/dtk}/bin/rocm_agent_enumerator"
+          ls -l "${ROCM_PATH:-/opt/dtk}/lib/hipblaslt/"
 
       - name: Test XLA [single_gpu]
         timeout-minutes: 360

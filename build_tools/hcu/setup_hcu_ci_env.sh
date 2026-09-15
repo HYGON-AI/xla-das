@@ -9,6 +9,7 @@
 #   2. HCU LLVM -> ${DTK_DIR}/aillvm   clang used by --config=hcu
 #   3. bazelisk -> /usr/local/bin/bazel
 #   4. node     -> /usr/local/node     symlinked into /usr/local/bin
+#   5. DTK 26.04: hipBLASLt Tensile kernel dir -> HIPBLASLT_TENSILE_LIBPATH
 #
 # Required:
 #   DTK_VERSION           e.g. 26.04. The download URL is derived from it.
@@ -99,13 +100,95 @@ install_node() {
     ln -sf /usr/local/node/bin/npx /usr/local/bin/npx
 }
 
+detect_hcu_arch() {
+    local arch=""
+    arch=$("${DTK_DIR}/bin/rocminfo" 2>/dev/null \
+        | grep -oE 'gfx[0-9a-f]+' \
+        | grep -v '^gfx000$' \
+        | head -n1) || arch=""
+    printf '%s\n' "${arch}"
+}
+
+list_tensile_libpaths() {
+    local dir names
+    echo "Tensile library directories under ${DTK_DIR}/lib/hipblaslt:"
+    for dir in "${DTK_DIR}"/lib/hipblaslt/library*/; do
+        [[ -d "${dir}" ]] || continue
+        names=$(cd "${dir}" && compgen -G 'TensileLibrary_*.dat' | tr '\n' ' ')
+        echo "  ${dir%/}: ${names:-<no TensileLibrary_*.dat>}"
+    done
+}
+
+find_tensile_libpath() {
+    local arch="$1"
+    local dir
+    for dir in "${DTK_DIR}"/lib/hipblaslt/library*/ "${DTK_DIR}/lib/hipblaslt/"; do
+        [[ -d "${dir}" ]] || continue
+        if [[ -n "${arch}" ]]; then
+            [[ -f "${dir}/TensileLibrary_${arch}.dat" ]] || continue
+        else
+            compgen -G "${dir}/TensileLibrary_*.dat" >/dev/null || continue
+        fi
+        echo "${dir%/}"
+        return 0
+    done
+    return 1
+}
+
+pin_hipblaslt_tensile_libpath() {
+    local hipblaslt_dir="${DTK_DIR}/lib/hipblaslt"
+    if [[ ! -d "${hipblaslt_dir}" ]]; then
+        echo "WARNING: ${hipblaslt_dir} not found, skipping hipBLASLt Tensile library setup." >&2
+        return 0
+    fi
+
+    local arch
+    arch=$(detect_hcu_arch)
+    if [[ -z "${arch}" ]]; then
+        echo "ERROR: cannot detect an HCU arch (gfx*) with rocm_agent_enumerator or rocminfo in ${DTK_DIR}/bin." >&2
+        list_tensile_libpaths >&2
+        echo "       Set HIPBLASLT_TENSILE_LIBPATH explicitly to override." >&2
+        exit 1
+    fi
+    echo "HCU device arch: ${arch}"
+
+    local libpath="${HIPBLASLT_TENSILE_LIBPATH:-}"
+    if [[ -n "${libpath}" ]]; then
+        if [[ ! -f "${libpath}/TensileLibrary_${arch}.dat" ]]; then
+            echo "ERROR: HIPBLASLT_TENSILE_LIBPATH=${libpath} has no TensileLibrary_${arch}.dat." >&2
+            list_tensile_libpaths >&2
+            exit 1
+        fi
+        echo "Using the preset HIPBLASLT_TENSILE_LIBPATH."
+    elif ! libpath=$(find_tensile_libpath "${arch}"); then
+        echo "ERROR: no TensileLibrary_${arch}.dat found for DTK ${DTK_VERSION}." >&2
+        list_tensile_libpaths >&2
+        echo "       This DTK cannot run hipBLASLt on this device." >&2
+        exit 1
+    elif [[ "$(basename "${libpath}")" == "library_${arch}" ]]; then
+        echo "Per-arch Tensile library (${libpath}), no HIPBLASLT_TENSILE_LIBPATH needed."
+        return 0
+    fi
+
+    export HIPBLASLT_TENSILE_LIBPATH="${libpath}"
+    echo "HIPBLASLT_TENSILE_LIBPATH ${HIPBLASLT_TENSILE_LIBPATH}"
+
+    printf 'export HIPBLASLT_TENSILE_LIBPATH=%s\n' "${HIPBLASLT_TENSILE_LIBPATH}" \
+        > "${DTK_DIR}/env.hipblaslt"
+    if [[ -n "${GITHUB_ENV:-}" ]]; then
+        echo "HIPBLASLT_TENSILE_LIBPATH=${HIPBLASLT_TENSILE_LIBPATH}" >> "${GITHUB_ENV}"
+    fi
+}
+
 install_dtk
 install_aillvm
 install_bazelisk
 install_node
+pin_hipblaslt_tensile_libpath
 
 echo "HCU CI environment ready:"
 echo "  DTK        ${DTK_DIR}"
 echo "  HCU LLVM   ${DTK_DIR}/aillvm (${AILLVM_MAJOR})"
 echo "  bazel      $(command -v bazel) (bazelisk ${BAZELISK_VERSION})"
 echo "  node       $(/usr/local/node/bin/node --version)"
+echo "  hipblaslt  ${HIPBLASLT_TENSILE_LIBPATH:-<not pinned>}"
