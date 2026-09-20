@@ -1,7 +1,3 @@
-// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-// SPDX-License-Identifier: Apache-2.0
-// Modified by Hygon Information Technology Co., Ltd., 2026.
-
 /* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +18,6 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
-#include <hip/hip_runtime_api.h>
 #include <memory>
 #include <optional>
 #include <string>
@@ -72,14 +67,6 @@ namespace gpu {
 using ::testing::_;
 using ::testing::ElementsAre;
 using ::testing::EndsWith;
-
-class HipResetEnvironment : public ::testing::Environment {
- public:
-  void TearDown() override { (void)hipDeviceReset(); }
-};
-
-const auto* const kHipResetEnvironment =
-    ::testing::AddGlobalTestEnvironment(new HipResetEnvironment);
 
 class GpuHloScheduleTest : public HloTestBaseLegacy {
  protected:

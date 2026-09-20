@@ -1,4 +1,3 @@
-# Modified by Hygon Information Technology Co., Ltd., 2026.
 # Description:
 #   GPU-specific components in XLA service implementation.
 
@@ -2795,9 +2794,7 @@ xla_test(
         "@com_google_googletest//:gtest",
         "@com_google_protobuf//:protobuf",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
-    ] + if_rocm_is_configured([
-        "@local_config_rocm//rocm:hip",
-    ]),
+    ],
 )
 
 cc_library(

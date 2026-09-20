@@ -27,6 +27,11 @@ if [[ ! -x "${HCU_CLANG}" ]]; then
 fi
 
 EXCLUDED_TESTS=(
+# The HipnnConvolution_1257 algorithm in convolution_test exhibits FP32-to-FP16 conversion mismatches against the IEEE standard
+# This behavior is intentionally designed in DTK, so the test is skipped
+    "Convolve2D_1x3x3x5_3x3x5x3_Valid/1.Types"
+# gpu_hlo_schedule_test abort on test exit, wait DTK fix
+    "GpuHloScheduleParameterizedTest/*"
 # Tiling params not support on rocm for too large shard memory using
     "TritonFusionNumericsVerifierTestSuite/TritonFusionNumericsVerifierTest.VerifyMultipleNestedFusionNumerics/*"
 # HCU not support libprofiler sdk now

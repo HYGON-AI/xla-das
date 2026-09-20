@@ -1,7 +1,3 @@
-// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-// SPDX-License-Identifier: Apache-2.0
-// Modified by Hygon Information Technology Co., Ltd., 2026.
-
 /* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -414,12 +410,12 @@ class Convolve2D_1x3x3x5_3x3x5x3_Valid : public ConvolutionTest {
     auto input_r4 = input_r1.Reshape(input_dims).value();
 
     std::vector<T> filter_elems(ShapeUtil::ElementsIn(filter_shape));
-    iota_int_init_value(filter_elems, -64);
+    iota_int_init_value(filter_elems, 1);
     auto filter_r1 = LiteralUtil::CreateR1<T>(filter_elems);
     auto filter_r4 = filter_r1.Reshape(filter_dims).value();
 
     auto expected_r1 = LiteralUtil::CreateR1<T>(
-        {static_cast<T>(24840), static_cast<T>(25875), static_cast<T>(26910)});
+        {static_cast<T>(92115), static_cast<T>(93150), static_cast<T>(94185)});
     auto expected_r4 = expected_r1.Reshape({1, 1, 1, 3}).value();
 
     ComputeAndCompareLiteral(&builder, expected_r4, {&input_r4, &filter_r4},
