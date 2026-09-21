@@ -15,23 +15,20 @@ name: CI HCU
 permissions:
   contents: read
 on:
-  pull_request_target:
+  push:
     branches:
       - jax/0.10.0-das
-    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "xla/**"
       - "third_party/gpus/**"
       - "third_party/llvm/**"
       - "third_party/triton/**"
+      - "build_tools/hcu/**"
       - "BUILD.bazel"
       - "MODULE.bazel"
       - "WORKSPACE"
       - ".bazelrc"
       - ".github/workflows/hcu_ci.yml"
-  push:
-    branches:
-      - jax/0.10.0-das
   workflow_dispatch:
 
 concurrency:
@@ -39,18 +36,8 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/jax/0.10.0-das' }}
 
 jobs:
-  manual_approval:
-    name: Manual Approval for CI
-    runs-on: ubuntu-latest
-    environment: ci-protection
-    if: ${{ github.event_name == 'pull_request_target' }}
-    steps:
-      - run: echo "Waiting for approval..."
-
   xla:
     name: XLA Linux x86 HCU
-    needs: [manual_approval]
-    if: ${{ always() && (needs.manual_approval.result == 'success' || needs.manual_approval.result == 'skipped') }}
     runs-on: [self-hosted, bw1100]
     env: &hcu_env
       DTK_VERSION: ${{ vars.HCU_DTK_VERSION || '26.04' }}
@@ -90,7 +77,6 @@ jobs:
         name: Checking out xla-das
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/head', github.event.pull_request.number) || github.sha }}
           path: xla-das
           persist-credentials: false
       
@@ -139,8 +125,6 @@ jobs:
 
   jax:
     name: JAX Linux x86 HCU
-    needs: [manual_approval]
-    if: ${{ always() && (needs.manual_approval.result == 'success' || needs.manual_approval.result == 'skipped')}}
     runs-on: [self-hosted, bw1100]
     env: *hcu_env
     container: *hcu_container
@@ -156,6 +140,7 @@ jobs:
         with:
           repository: ${{ vars.HCU_JAX_DAS_REPO || 'HYGON-AI/jax-das' }}
           ref: ${{ vars.HCU_JAX_DAS_REF || 'v0.10.0-das' }}
+          token: ${{ secrets.JAX_DAS_READ_TOKEN }}
           path: jax-das
           persist-credentials: false
 
@@ -185,6 +170,6 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: jax-hcu-bazel-artifacts-${{ github.run_id }}
+          name: jax-hcu-test-artifacts-${{ github.run_id }}
           path: jax-das/test-artifacts/
           retention-days: 7

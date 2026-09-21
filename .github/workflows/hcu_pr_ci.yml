@@ -1,0 +1,114 @@
+# Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+# SPDX-License-Identifier: Apache-2.0
+
+# Organization variables consumed below:
+#   BASE_COMPILE_IMAGE_ROCKY_PY311  base compile image, "<registry>/<repo>:<tag>" 
+#   RESOURCE_SERVER_URL             server resources url
+#
+# Repositories variables consumed below:
+#   HCU_DTK_VERSION                 optional, default set to 26.04. The tarball URL is derived from it.
+
+name: CI HCU PR
+permissions:
+  contents: read
+on:
+  pull_request_target:
+    branches:
+      - jax/0.10.0-das
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "xla/**"
+      - "third_party/gpus/**"
+      - "third_party/llvm/**"
+      - "third_party/triton/**"
+      - "build_tools/hcu/**"
+      - "BUILD.bazel"
+      - "MODULE.bazel"
+      - "WORKSPACE"
+      - ".bazelrc"
+      - ".github/workflows/hcu_pr_ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  manual_approval:
+    name: Manual Approval for PR CI
+    runs-on: ubuntu-latest
+    environment: ci-protection
+    if: ${{ github.event_name == 'pull_request_target' }}
+    steps:
+      - run: echo "Waiting for approval..."
+
+  xla:
+    name: XLA Linux x86 HCU PR
+    needs: [manual_approval]
+    if: ${{ always() && (needs.manual_approval.result == 'success' || needs.manual_approval.result == 'skipped') }}
+    runs-on: [self-hosted, bw1100]
+    env:
+      DTK_VERSION: ${{ vars.HCU_DTK_VERSION || '26.04' }}
+      RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
+    container:
+      image: ${{ vars.BASE_COMPILE_IMAGE_ROCKY_PY311 }}
+      volumes:
+        - /opt/hyhal:/opt/hyhal:ro
+      options: >-
+        --privileged
+        --user root
+        --device=/dev/kfd
+        --device=/dev/mkfd
+        --device=/dev/dri
+        --group-add video
+        --ipc=host
+        --shm-size=64G
+        --cap-add=SYS_PTRACE
+        --security-opt=seccomp=unconfined
+        --tmpfs /root/.cache/bazel:rw,exec,size=80g
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check Docker environment
+        run: |
+          if [ -f /.dockerenv ] || [ -f /run/.containerenv ] ||
+             grep -qaE '(docker|containerd|kubepods|libpod)' /proc/1/cgroup 2>/dev/null; then
+            echo "Docker environment detected on $(hostname), continue."
+          else
+            echo "::error::This job must run inside the HCU Docker container, but no Docker environment was detected on $(hostname). Aborting."
+            exit 1
+          fi
+
+      - name: Checking out xla-das
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/head', github.event.pull_request.number) || github.sha }}
+          path: xla-das
+          persist-credentials: false
+
+      - name: Install DTK, HCU LLVM, bazelisk and node
+        working-directory: xla-das
+        run: bash build_tools/hcu/setup_hcu_ci_env.sh
+
+      - name: Device info
+        run: |
+          lscpu
+          source /opt/dtk/env.sh
+          "${ROCM_PATH:-/opt/dtk}/bin/rocminfo"
+
+      - name: Test XLA [pr subset]
+        timeout-minutes: 180
+        working-directory: xla-das
+        run: |
+          source /opt/dtk/env.sh
+          bash build_tools/hcu/run_xla_pr_ci_build.sh
+
+      - name: Upload XLA test artifacts
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: xla-hcu-pr-test-artifacts-${{ github.run_id }}
+          path: xla-das/ci_artifacts/
+          retention-days: 7
