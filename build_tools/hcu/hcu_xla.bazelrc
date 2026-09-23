@@ -3,7 +3,7 @@
 
 common:hcu_base --config=rocm_base
 common:hcu_base --repo_env=ROCM_PATH=/opt/dtk
-common:hcu_base --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx906,gfx926,gfx928,gfx936,gfx938"
+common:hcu_base --repo_env=TF_ROCM_HCUGPU_TARGETS="gfx906,gfx926,gfx928,gfx936,gfx938"
 common:hcu_base --action_env=TF_ROCM_CLANG="1"
 common:hcu_base --action_env=CLANG_COMPILER_PATH="/opt/dtk/aillvm/bin/clang"
 

@@ -10,7 +10,7 @@ source ci/envs/default.env
 
 DTK_DIR="${DTK_DIR:-/opt/dtk}"
 AILLVM_DIR="${AILLVM_DIR:-${DTK_DIR}/aillvm}"
-HCU_AMDGPU_TARGETS="${HCU_AMDGPU_TARGETS:-gfx906,gfx926,gfx928,gfx936,gfx938}"
+TF_ROCM_HCUGPU_TARGETS="${TF_ROCM_HCUGPU_TARGETS:-gfx906,gfx926,gfx928,gfx936,gfx938}"
 HCU_CODEGEN_CONFIG="${HCU_CODEGEN_CONFIG:-hcu}"
 HCU_CLANG="${AILLVM_DIR}/bin/clang"
 HCU_CLANGXX="${AILLVM_DIR}/bin/clang++"
@@ -163,8 +163,8 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --repo_env=CC="${HCU_CLANG}" \
     --repo_env=CXX="${HCU_CLANGXX}" \
     --repo_env=BAZEL_COMPILER="${HCU_CLANG}" \
-    --repo_env=TF_ROCM_AMDGPU_TARGETS="${HCU_AMDGPU_TARGETS}" \
-    --action_env=TF_ROCM_AMDGPU_TARGETS="${HCU_AMDGPU_TARGETS}" \
+    --repo_env=TF_ROCM_HCUGPU_TARGETS="${TF_ROCM_HCUGPU_TARGETS}" \
+    --action_env=TF_ROCM_HCUGPU_TARGETS="${TF_ROCM_HCUGPU_TARGETS}" \
     --repo_env=HERMETIC_PYTHON_VERSION="${JAXCI_HERMETIC_PYTHON_VERSION}" \
     --//jax:build_jaxlib="${JAXCI_BUILD_JAXLIB}" \
     --//jax:build_jax="${JAXCI_BUILD_JAX}" \

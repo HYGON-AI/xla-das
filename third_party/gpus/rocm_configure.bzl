@@ -8,7 +8,7 @@
   * `CLANG_COMPILER_PATH`: The clang compiler path that will be used for
     host code compilation if TF_ROCM_CLANG is 1.
   * `ROCM_PATH`: The path to the ROCm toolkit. Default is `/opt/rocm`.
-  * `TF_ROCM_AMDGPU_TARGETS`: The AMDGPU targets.
+  * `TF_ROCM_HCUGPU_TARGETS`: The HCU targets.
   * `TF_ROCM_RBE_DOCKER_IMAGE`: Docker image to be used in rbe worker to execute the action
   * `TF_ROCM_RBE_SINGLE_GPU_POOL`: The name of the rbe pool used to execute single gpu tests
   * `TF_ROCM_RBE_MULTI_GPU_POOL`: The name of the rbe pool used to execute multi gpu tests
@@ -53,7 +53,7 @@ load(
 _CLANG_COMPILER_PATH = "CLANG_COMPILER_PATH"
 _TF_SYSROOT = "TF_SYSROOT"
 _ROCM_TOOLKIT_PATH = "ROCM_PATH"
-_TF_ROCM_AMDGPU_TARGETS = "TF_ROCM_AMDGPU_TARGETS"
+_TF_ROCM_HCUGPU_TARGETS = "TF_ROCM_HCUGPU_TARGETS"
 _TF_ROCM_CONFIG_REPO = "TF_ROCM_CONFIG_REPO"
 _DISTRIBUTION_PATH = "rocm/rocm_dist"
 _ROCM_DISTRO_VERSION = "ROCM_DISTRO_VERSION"
@@ -190,7 +190,7 @@ def _enable_rocm(repository_ctx):
 
 def _amdgpu_targets(repository_ctx, rocm_toolkit_path, bash_bin):
     """Returns a list of strings representing AMDGPU targets."""
-    amdgpu_targets_str = get_host_environ(repository_ctx, _TF_ROCM_AMDGPU_TARGETS)
+    amdgpu_targets_str = get_host_environ(repository_ctx, _TF_ROCM_HCUGPU_TARGETS)
     if not amdgpu_targets_str:
         cmd = "%s/bin/rocm_agent_enumerator" % rocm_toolkit_path
         result = execute(repository_ctx, [bash_bin, "-c", cmd])
@@ -840,7 +840,7 @@ _ENVIRONS = [
     "TF_ROCM_CLANG",
     "TF_NEED_CUDA",  # Needed by the `if_gpu_is_configured` macro
     _ROCM_TOOLKIT_PATH,
-    _TF_ROCM_AMDGPU_TARGETS,
+    _TF_ROCM_HCUGPU_TARGETS,
     _ROCM_DISTRO_VERSION,
     _ROCM_DISTRO_URL,
     _ROCM_DISTRO_HASH,
