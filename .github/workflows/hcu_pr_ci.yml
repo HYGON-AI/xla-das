@@ -34,14 +34,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  manual_approval:
-    name: Manual Approval for PR CI
-    runs-on: ubuntu-latest
-    environment: ci-protection
-    if: ${{ github.event_name == 'pull_request_target' }}
-    steps:
-      - run: echo "Waiting for approval..."
-
   xla:
     name: XLA Linux x86 HCU PR
     needs: [manual_approval]
