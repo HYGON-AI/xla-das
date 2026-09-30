@@ -1,3 +1,5 @@
+# Modified by Hygon Information Technology Co., Ltd., 2026.
+
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
@@ -64,6 +66,7 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner:backends_proto_cc",
         "//xla/backends/autotuner:codegen_backend",
+        "//xla/backends/gpu/codegen/triton:compilation_pipeline",
         "//xla/backends/gpu/codegen/triton:support",
         "//xla/backends/gpu/codegen/triton:tma_utils",
         "//xla/hlo/analysis:symbolic_map",

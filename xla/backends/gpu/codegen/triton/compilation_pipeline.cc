@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,23 +85,24 @@ void CreateTritonXlaPipeline(
 void CreateTritonCudaPipeline(
     mlir::OpPassManager* pm,
     const stream_executor::CudaComputeCapability& cuda_cc, int num_warps,
-    int num_ctas, int num_stages);
+    int num_ctas, int num_stages, const TritonHcuTuning& hcu_tuning);
 
 void CreateTritonRocmPipeline(
     mlir::OpPassManager* pm,
     const stream_executor::RocmComputeCapability& rocm_cc, int num_warps,
-    int num_ctas, int num_stages);
+    int num_ctas, int num_stages, const TritonHcuTuning& hcu_tuning);
 
 void CreateTritonPipeline(mlir::OpPassManager* pm,
                           const stream_executor::GpuComputeCapability& gpu_cc,
-                          int num_warps, int num_ctas, int num_stages) {
+                          int num_warps, int num_ctas, int num_stages,
+                          const TritonHcuTuning& hcu_tuning) {
   if (auto* cuda_cc = gpu_cc.cuda_compute_capability()) {
     return CreateTritonCudaPipeline(pm, *cuda_cc, num_warps, num_ctas,
-                                    num_stages);
+                                    num_stages, hcu_tuning);
   }
 
   CreateTritonRocmPipeline(pm, *gpu_cc.rocm_compute_capability(), num_warps,
-                           num_ctas, num_stages);
+                           num_ctas, num_stages, hcu_tuning);
 }
 
 }  // namespace xla::gpu

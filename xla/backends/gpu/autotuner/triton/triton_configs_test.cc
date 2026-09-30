@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +36,10 @@ TEST(TritonConfigsTest, PlatformsReturnNonEmptyConfig) {
               SizeIs(32));
   EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kDefaultRocm),
               SizeIs(6));
+  EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kDefaultHcu),
+              SizeIs(18));
+  EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kHcuBowen),
+              SizeIs(35));
   EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kHopper),
               SizeIs(63));
 }
