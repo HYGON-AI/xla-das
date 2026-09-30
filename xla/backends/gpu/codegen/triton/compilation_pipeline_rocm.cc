@@ -148,7 +148,11 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
   }
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   // TODO ROCm Check if we want to compare MI100 and greater
-  pm->addPass(mlir::createTritonAMDGPUOptimizeEpilogue());
+  // Experiment: the Triton HCU backend runs this only when
+  // `optimize_epilogue` is set (knob default false).
+  if (!is_hcu) {
+    pm->addPass(mlir::createTritonAMDGPUOptimizeEpilogue());
+  }
   pm->addPass(mt::amdgpu::createTritonAMDGPUOptimizeDotOperands(
       {rocm_cc.gfx_version()}));
   if (is_hcu) {
