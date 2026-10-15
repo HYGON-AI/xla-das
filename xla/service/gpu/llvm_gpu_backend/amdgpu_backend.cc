@@ -694,10 +694,6 @@ absl::Status CompileModuleToHsacoWithHcu(
       "-enable-detailed-clobber-check=true",
       "-mllvm",
       vgpr_support,
-      // Reference passes this for clang 18; it shortens the exp/div expansions
-      // (softmax kernel: 803 -> 714 instruction lines) at the cost of accuracy.
-      "-mllvm",
-      "-enable-hcu-approx-func-fp-math=true",
       // Experiment: the HCU latency model (reference `sched_latency=mmac5-ds10`).
       "-mllvm",
       "-enable-latency-hack=true",
