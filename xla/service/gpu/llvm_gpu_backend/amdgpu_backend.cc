@@ -664,6 +664,16 @@ absl::Status CompileModuleToHsacoWithHcu(
 
   TF_ASSIGN_OR_RETURN(std::string clang_program, FindHcuClangTool());
 
+  // Register-file class of the part, mirroring `_get_clang_args` in the Triton
+  // HCU backend: gfx936/gfx938 have a 768-entry VGPR file, other HCU parts 512.
+  std::string vgpr_support;
+  if (gfx == "gfx936" || gfx == "gfx938") {
+    vgpr_support = "-support-768-vgprs=true";
+  } else if (gfx == "gfx928" || gfx == "gfx946" || gfx == "gfx92a") {
+    vgpr_support = "-support-512-vgprs=true";
+  } else {
+    vgpr_support = "-support-512-vgprs=true";
+  }
   const std::vector<std::string> clang_asm_args{
       "clang",
       "-cc1",
@@ -675,8 +685,22 @@ absl::Status CompileModuleToHsacoWithHcu(
       "amdgcn-amd-amdhsa",
       "-target-cpu",
       std::string(gfx),
+      // Matches the Triton HCU backend's `-mcpu=<arch>:xnack-`: without it the
+      // backend reserves the xnack mask (2 SGPRs/kernel, counted in
+      // NumSGPRsForWavesPerEU).
+      "-target-feature",
+      "-xnack",
       "-mllvm",
       "-enable-detailed-clobber-check=true",
+      "-mllvm",
+      vgpr_support,
+      // Experiment: the HCU latency model (reference `sched_latency=mmac5-ds10`).
+      "-mllvm",
+      "-enable-latency-hack=true",
+      "-mllvm",
+      "-mmac-latency=5",
+      "-mllvm",
+      "-ds-load-store-latency=10",
       std::string(ir_path),
       "-o",
       std::string(asm_path),
@@ -690,7 +714,7 @@ absl::Status CompileModuleToHsacoWithHcu(
       "assembler",
       "-target",
       "amdgcn-amd-amdhsa",
-      absl::StrCat("-mcpu=", gfx),
+      absl::StrCat("-mcpu=", gfx, ":xnack-"),
       std::string(asm_path),
       "-o",
       std::string(hsaco_path),

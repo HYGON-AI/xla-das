@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -448,7 +452,15 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
                           block_level_parameters.is_warp_specialization_allowed,
                           enable_pdl);
 
-  CreateTritonPipeline(&pm, gpu_cc, num_warps, num_ctas, num_stages);
+  // `is_warp_specialization_allowed` is what CreateTritonXlaPipeline used to
+  // decide whether to tag loops with `tt.warp_specialize`; the HCU
+  // warp-specialization pass only rewrites tagged loops, so both decisions must
+  // come from the same field.
+  TritonHcuTuning hcu_tuning;
+  hcu_tuning.enable_warp_specialization =
+      block_level_parameters.is_warp_specialization_allowed;
+  CreateTritonPipeline(&pm, gpu_cc, num_warps, num_ctas, num_stages,
+                       hcu_tuning);
 
   // Triton generates pointers to the global address space, while XLA needs a
   // kernel signature with pointers to the generic address space.

@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,6 +64,10 @@ const std::vector<TritonGemmConfig>& GetTritonConfigsForPlatform(
             ParseConfig(configs::get_cuda())},
            {TritonConfigsPlatform::kDefaultRocm,
             ParseConfig(configs::get_rocm())},
+           {TritonConfigsPlatform::kDefaultHcu,
+            ParseConfig(configs::get_hcu())},
+           {TritonConfigsPlatform::kHcuBowen,
+            ParseConfig(configs::get_hcu_bowen())},
            {TritonConfigsPlatform::kHopper, ParseConfig(configs::get_h100())}});
   return kConfigs->at(platform);
 }

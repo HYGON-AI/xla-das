@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +26,7 @@ limitations under the License.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
+#include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "triton/Conversion/TritonGPUToLLVM/Passes.h"
@@ -182,7 +187,9 @@ static void MakeLLIR(mlir::OpPassManager* pm,
 void CreateTritonCudaPipeline(
     mlir::OpPassManager* pm,
     const stream_executor::CudaComputeCapability& cuda_cc, int num_warps,
-    int num_ctas, int num_stages) {
+    int num_ctas, int num_stages, const TritonHcuTuning& hcu_tuning) {
+  // HCU tuning does not apply to CUDA targets.
+  (void)hcu_tuning;
   MakeTTIR(pm, cuda_cc);
   MakeTTGIR(pm, cuda_cc, num_warps, num_ctas, num_stages);
   MakeLLIR(pm, cuda_cc);

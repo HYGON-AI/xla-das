@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +37,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/triton/dot_search_space.h"
 #include "xla/backends/gpu/autotuner/triton/triton_configs.h"
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
+#include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
 #include "xla/backends/gpu/transforms/fusion_wrapper.h"
 #include "xla/backends/gpu/transforms/priority_fusion.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
@@ -68,6 +73,16 @@ namespace {
 std::vector<TritonGemmConfig> GetDefaultTritonConfigs(
     se::GpuComputeCapability compute_capability) {
   if (compute_capability.IsRocm()) {
+    const stream_executor::RocmComputeCapability& rocm_cc =
+        *compute_capability.rocm_compute_capability();
+    switch (GetHcuRegisterFileClass(rocm_cc)) {
+      case HcuRegisterFileClass::k768Vgpr:
+        return GetTritonConfigsForPlatform(TritonConfigsPlatform::kHcuBowen);
+      case HcuRegisterFileClass::k512Vgpr:
+        return GetTritonConfigsForPlatform(TritonConfigsPlatform::kDefaultHcu);
+      case HcuRegisterFileClass::kNotHcu:
+        break;
+    }
     return GetTritonConfigsForPlatform(TritonConfigsPlatform::kDefaultRocm);
   }
 
@@ -95,6 +110,11 @@ std::vector<TritonGemmConfig> GetDefaultTritonConfigs(
 
 bool IsWarpSpecializationAvailable(
     se::GpuComputeCapability compute_capability) {
+  if (compute_capability.IsRocm()) {
+    // HCU parts implement warp specialization in the Triton backend
+    // (`WarpSpecializationHCU`); no other ROCm target does.
+    return IsHcuRocmTarget(*compute_capability.rocm_compute_capability());
+  }
   return compute_capability.IsCuda() &&
          compute_capability.cuda_compute_capability()->IsAtLeastBlackwell();
 }

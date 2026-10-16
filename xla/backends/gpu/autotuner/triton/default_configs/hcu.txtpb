@@ -1,0 +1,31 @@
+# Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+# SPDX-License-Identifier: Apache-2.0
+# Modified by Hygon Information Technology Co., Ltd., 2026.
+
+# Default Triton configs for DTK ROCm targets with a 512-entry VGPR file
+# (gfx926 kongming, gfx928 zhongda, gfx92a yueying, gfx946).
+#
+# NOT autotuned. These are the previous single ROCm bucket plus explicit
+# `num_stages` variants, so that the autotuner can actually reach the HCU MLS
+# stream pipeline: its async single-buffer LDS copy path only engages for
+# num_stages >= 2, and the old bucket pinned every entry to num_stages: 1.
+# Replace with offline-tuned values (see third_party/hcu/perf in the Triton
+# tree) before relying on any entry as a default.
+config { block_m: 32 block_n: 32 block_k: 256 split_k: 1 num_stages: 1 num_warps: 4 num_ctas: 1 }
+config { block_m: 64 block_n: 32 block_k: 32 split_k: 16 num_stages: 1 num_warps: 4 num_ctas: 1 }
+config { block_m: 32 block_n: 64 block_k: 64 split_k: 4 num_stages: 1 num_warps: 4 num_ctas: 1 }
+config { block_m: 128 block_n: 128 block_k: 64 split_k: 4 num_stages: 1 num_warps: 4 num_ctas: 1 }
+config { block_m: 16 block_n: 16 block_k: 256 split_k: 1 num_stages: 1 num_warps: 4 num_ctas: 1 }
+config { block_m: 16 block_n: 128 block_k: 32 split_k: 16 num_stages: 1 num_warps: 4 num_ctas: 1 }
+config { block_m: 32 block_n: 32 block_k: 128 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 }
+config { block_m: 32 block_n: 32 block_k: 128 split_k: 1 num_stages: 3 num_warps: 4 num_ctas: 1 }
+config { block_m: 64 block_n: 64 block_k: 64 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 }
+config { block_m: 64 block_n: 64 block_k: 64 split_k: 1 num_stages: 3 num_warps: 4 num_ctas: 1 }
+config { block_m: 64 block_n: 128 block_k: 32 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 }
+config { block_m: 64 block_n: 128 block_k: 32 split_k: 1 num_stages: 3 num_warps: 4 num_ctas: 1 }
+config { block_m: 128 block_n: 64 block_k: 32 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 }
+config { block_m: 128 block_n: 128 block_k: 64 split_k: 1 num_stages: 2 num_warps: 8 num_ctas: 1 }
+config { block_m: 128 block_n: 128 block_k: 64 split_k: 1 num_stages: 3 num_warps: 8 num_ctas: 1 }
+config { block_m: 16 block_n: 64 block_k: 128 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 }
+config { block_m: 64 block_n: 32 block_k: 64 split_k: 1 num_stages: 2 num_warps: 8 num_ctas: 1 }
+config { block_m: 128 block_n: 256 block_k: 32 split_k: 1 num_stages: 2 num_warps: 8 num_ctas: 1 }

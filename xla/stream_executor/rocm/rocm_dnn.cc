@@ -50,6 +50,7 @@ limitations under the License.
 #include "rocm/include/hip/amd_detail/amd_hip_bfloat16.h"
 #include "rocm/include/hip/amd_detail/hip_fp16_gcc.h"
 #include "rocm/include/miopen/miopen.h"
+#include "rocm/include/miopen/version.h"
 #include "rocm/rocm_config.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
@@ -4338,9 +4339,8 @@ class RocmFusedConvRunner : public dnn::FusedConvRunner {
     CHECK(output_profile_result == nullptr);
 
     miopenStatus_t status;
-
 // HCU not support miopenExecuteFusionPlan_v2 now
-#if (TF_ROCM_VERSION >= 70000 && !XLA_ROCM_ENABLE_HCU)
+#if (TF_ROCM_VERSION >= 70000) && defined(MIOPEN_VERSION_MAJOR) && (MIOPEN_VERSION_MAJOR >= 3)
     status = miopenExecuteFusionPlan_v2(
         miopen.handle(), fusion_plan_.fusion_plan_, input_nd_.handle(),
         input_data.opaque(), output_nd_.handle(), output_data.opaque(),
