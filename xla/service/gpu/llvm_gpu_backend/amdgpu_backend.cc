@@ -129,10 +129,6 @@ constexpr const char* kAMDGPUDeviceLibData = "";
 #define XLA_ROCM_ENABLE_HCU 1
 #endif
 
-#ifndef HCU_CLANG_PATH
-#define HCU_CLANG_PATH "/opt/dtk/aillvm/bin"
-#endif
-
 namespace xla {
 namespace gpu {
 namespace {
@@ -601,7 +597,11 @@ bool ShouldUseHcuCodegen(absl::string_view gfx) {
 
 std::vector<std::string> GetHcuClangSearchPaths() {
   std::vector<std::string> search_paths;
-  search_paths.push_back(HCU_CLANG_PATH);
+  const char* hcu_clang_path = std::getenv("HCU_CLANG_PATH");
+  if (hcu_clang_path == nullptr || *hcu_clang_path == '\0') {
+    hcu_clang_path = "/opt/dtk/aillvm/bin";
+  }
+  search_paths.push_back(hcu_clang_path);
   search_paths.push_back(tsl::io::JoinPath(tsl::RocmRoot(), "aillvm/bin"));
   return search_paths;
 }
