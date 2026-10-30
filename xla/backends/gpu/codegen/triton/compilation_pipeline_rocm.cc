@@ -262,6 +262,8 @@ static void MakeLLIR(mlir::OpPassManager* pm,
                      const stream_executor::RocmComputeCapability& rocm_cc,
                      int num_stages,
                      const TritonHcuTuning& hcu_tuning) {
+  // Consumed by the HCU warp-spec lowering once that pass is linked in.
+  (void)hcu_tuning;
   pm->addPass(
       mlir::createTritonAMDGPUUpdateAsyncWaitCount({rocm_cc.gfx_version()}));
   pm->addPass(
