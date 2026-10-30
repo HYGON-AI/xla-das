@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_COMMAND_H_
 #define XLA_BACKENDS_GPU_RUNTIME_COMMAND_H_
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -24,13 +25,13 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/runtime/resource_use.h"
@@ -39,7 +40,6 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -49,14 +49,13 @@ namespace xla::gpu {
 
 // clang-format off
 #define XLA_GPU_COMMAND_LIST(V)                              \
-  V(kEmptyCmd, "EmptyCmd")                                   \
-  V(kChildCmd, "ChildCmd")                                   \
   V(kTracedCommand, "TracedCommand")       \
   V(kComputationIdCmd, "ComputationIdCmd")                   \
   V(kLaunchCmd, "LaunchCmd")                                 \
   V(kCustomKernelLaunchCmd, "CustomKernelLaunchCmd")         \
   V(kCublasLtCmd, "CublasLtCmd")                             \
   V(kCuDnnCmd, "CuDnnCmd")                                   \
+  V(kConvolutionCmd, "ConvolutionCmd")                       \
   V(kGemmCmd, "GemmCmd")                                     \
   V(kMemcpyDeviceToDeviceCmd, "MemcpyDeviceToDeviceCmd")     \
   V(kMemzeroCmd, "MemzeroCmd")                               \
@@ -66,18 +65,13 @@ namespace xla::gpu {
   V(kCustomCallCmd, "CustomCallCmd")                         \
   V(kBarrierCmd, "BarrierCmd")                               \
   V(kCollectiveCmd, "CollectiveCmd")                         \
-  V(kAllReduceCmd, "AllReduceCmd")                           \
-  V(kReduceScatterCmd, "ReduceScatterCmd")                   \
   V(kAllToAllCmd, "AllToAllCmd")                             \
   V(kAllGatherCmd, "AllGatherCmd")                           \
-  V(kCollectiveBroadcastCmd, "CollectiveBroadcastCmd")       \
   V(kCollectivePermuteCmd, "CollectivePermuteCmd")           \
   V(kRaggedAllToAllCmd, "RaggedAllToAllCmd")                 \
   V(kRecvCmd, "RecvCmd")                                     \
   V(kSendCmd, "SendCmd")                                     \
   V(kAsyncDone, "AsyncDone")                                 \
-  V(kDynamicSliceFusionCmd, "DynamicSliceFusionCmd")         \
-  V(kDynamicSliceCopyFusionCmd, "DynamicSliceCopyFusionCmd") \
   V(kUnknownCmd, "UnknownCmd") \
   // clang-format on
 
@@ -137,6 +131,10 @@ class Command : public Thunk {
 
   virtual ~Command() = default;
 
+  absl::StatusOr<ThunkProto> ToProto() const override {
+    return absl::InvalidArgumentError("Command can't be serialized.");
+  }
+
  protected:
   // Constructor for Thunk subclasses that are also Commands. Preserves the
   // caller's Thunk::Kind and ThunkInfo instead of using Kind::kCommand and an
@@ -187,8 +185,10 @@ class Command : public Thunk {
   // to new buffer allocations).
   using RecordAction = std::variant<RecordCreate, RecordUpdate>;
 
-  // Commands are not executed directly as Thunks; they are recorded into
-  // command buffers via Record(). ExecuteOnStream is not supported.
+  // Default for pure commands: direct execution is unsupported — recording
+  // into a command buffer via Record() is the expected path. Thunk/Command
+  // hybrids (e.g. KernelThunk, CollectiveThunk, CuDnnThunk) may override this
+  // to support eager execution on a stream in addition to recording.
   absl::Status ExecuteOnStream(const ExecuteParams& params) override {
     return absl::UnimplementedError(
         "Command cannot be executed directly as a Thunk; use Record() instead");
@@ -216,19 +216,13 @@ class Command : public Thunk {
   virtual bool requires_initialization() const { return false; }
 
   // Returns true if this command is implemented via CUDA stream activity
-  // tracing (i.e. a subclass of TracedCommandBufferCmd).
+  // tracing (i.e. a subclass of TracedCommand).
   virtual bool IsTracedCommand() const { return false; }
 
   // Returns true if command supports loop unroll, the while loop can be
   // unrolled only if it has pre-known trip count and also all commands from the
   // body commands are unrollable.
   virtual bool support_loop_unroll() const { return true; }
-
-  // This is only true for DynamicSliceCopyFusionCmd when offset is dependents
-  // on loop iteration. As the command of slice operation is access the sliced
-  // memory region that varies across loop iterations, so even the original
-  // buffer allocation is the same, it still requires to do update.
-  virtual bool force_update() const { return false; }
 
   std::shared_ptr<Resource> token() const { return token_; }
 

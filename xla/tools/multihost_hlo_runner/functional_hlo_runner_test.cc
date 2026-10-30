@@ -542,9 +542,10 @@ void CompileAndFilecheck(
   opts.num_partitions = num_partitions;
   opts.spmd_mode = FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
   opts.xla_dump_to = dump_dir;
-  TF_EXPECT_OK(FunctionalHloRunner::LoadAndCompile(
-      *client, xla::DebugOptions{}, preproc_options, opts, hlo_file,
-      InputFormat::kText));
+  TF_EXPECT_OK(FunctionalHloRunner::LoadAndCompile(*client, xla::DebugOptions{},
+                                                   preproc_options, opts,
+                                                   hlo_file, InputFormat::kText)
+                   .status());
 
   {
     std::vector<std::string> after_opt_hlo_paths;
@@ -644,7 +645,7 @@ absl::StatusOr<std::string> GetExpectedBackendFingerprint() {
   if (platform_name == "rocm") {
     return "2971291867";
   }
-  return "3357903800";
+  return "2396424345";
 }
 }  // namespace
 
@@ -707,27 +708,29 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id) {
   // autotuner_test.cc. Here, we just check that compilation
   // actually succeeds, and that the autotuner runs correctly ends up storing
   // results for each node in the key-value store.
-  TF_RETURN_IF_ERROR(FunctionalHloRunner::LoadAndCompile(
-      *env.client, GetDebugOptionsFromFlags(),
-      FunctionalHloRunner::PreprocessingOptions{},
-      FunctionalHloRunner::RawCompileOptions{.num_replicas = kNumNodes},
-      GetHloPath("multiple_gemm_fusions.hlo"), InputFormat::kText, node_id,
-      kNumNodes, /*kv_store=*/nullptr,
-      /*use_gpu_count_workaround=*/false));
+  TF_RETURN_IF_ERROR(
+      FunctionalHloRunner::LoadAndCompile(
+          *env.client, GetDebugOptionsFromFlags(),
+          FunctionalHloRunner::PreprocessingOptions{},
+          FunctionalHloRunner::RawCompileOptions{.num_replicas = kNumNodes},
+          GetHloPath("multiple_gemm_fusions.hlo"), InputFormat::kText, node_id,
+          kNumNodes, /*kv_store=*/nullptr,
+          /*use_gpu_count_workaround=*/false)
+          .status());
   if (node_id == 0) {
     TF_ASSIGN_OR_RETURN(std::string backend_fp,
                         GetExpectedBackendFingerprint());
     TF_ASSIGN_OR_RETURN(
         std::string results0,
         env.kv_store->Get(
-            absl::StrCat("autotune_results_b190aeb9aa0b9e93e4c08d095726f562_",
+            absl::StrCat("autotune_results_fda6faffd312182b0b13b647233621fc_",
                          backend_fp, "_0"),
             absl::Seconds(1)));
     CHECK(absl::StrContains(results0, "result"));
     TF_ASSIGN_OR_RETURN(
         std::string results1,
         env.kv_store->Get(
-            absl::StrCat("autotune_results_b190aeb9aa0b9e93e4c08d095726f562_",
+            absl::StrCat("autotune_results_fda6faffd312182b0b13b647233621fc_",
                          backend_fp, "_1"),
             absl::Seconds(1)));
     CHECK(absl::StrContains(results1, "result"));

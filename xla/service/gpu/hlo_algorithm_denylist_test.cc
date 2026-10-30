@@ -24,11 +24,13 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/autotuning.pb.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/tests/test_utils.h"
@@ -87,12 +89,12 @@ TEST_F(DenylistTest, DefaultTest) {
             HloOpcode::kCustomCall);
 
   ComputeCapability cc;
-  cc.set_major(7);
-  cc.set_minor(0);
+  cc.set_major_version(7);
+  cc.set_minor_version(0);
   CudnnVersion cudnn_version;
-  cudnn_version.set_major(7);
-  cudnn_version.set_minor(6);
-  cudnn_version.set_patch(2);
+  cudnn_version.set_major_version(7);
+  cudnn_version.set_minor_version(6);
+  cudnn_version.set_patch_version(2);
   auto list = GetDisabledConvAlgorithms(
       cc, cudnn_version, /*blas_version=*/"9000",
       static_cast<const HloCustomCallInstruction&>(
@@ -126,12 +128,12 @@ TEST_F(DenylistTest, NoBlasVersionSet) {
             HloOpcode::kCustomCall);
 
   ComputeCapability cc;
-  cc.set_major(7);
-  cc.set_minor(0);
+  cc.set_major_version(7);
+  cc.set_minor_version(0);
   CudnnVersion cudnn_version;
-  cudnn_version.set_major(7);
-  cudnn_version.set_minor(6);
-  cudnn_version.set_patch(2);
+  cudnn_version.set_major_version(7);
+  cudnn_version.set_minor_version(6);
+  cudnn_version.set_patch_version(2);
   auto list = GetDisabledConvAlgorithms(
       cc, cudnn_version, /*blas_version=*/"120301",
       static_cast<const HloCustomCallInstruction&>(
@@ -157,12 +159,12 @@ TEST_F(DenylistTest, EntryFromHardcodedList) {
             HloOpcode::kCustomCall);
 
   ComputeCapability cc;
-  cc.set_major(7);
-  cc.set_minor(0);
+  cc.set_major_version(7);
+  cc.set_minor_version(0);
   CudnnVersion cudnn_version;
-  cudnn_version.set_major(9);
-  cudnn_version.set_minor(0);
-  cudnn_version.set_patch(0);
+  cudnn_version.set_major_version(9);
+  cudnn_version.set_minor_version(0);
+  cudnn_version.set_patch_version(0);
   auto list = GetDisabledConvAlgorithms(
       cc, cudnn_version, /*blas_version=*/"9000",
       static_cast<const HloCustomCallInstruction&>(
@@ -187,12 +189,12 @@ TEST_F(DenylistTest, GenerateDenyListEntry) {
             HloOpcode::kCustomCall);
 
   ComputeCapability cc;
-  cc.set_major(7);
-  cc.set_minor(0);
+  cc.set_major_version(7);
+  cc.set_minor_version(0);
   CudnnVersion cudnn_version;
-  cudnn_version.set_major(9);
-  cudnn_version.set_minor(0);
-  cudnn_version.set_patch(0);
+  cudnn_version.set_major_version(9);
+  cudnn_version.set_minor_version(0);
+  cudnn_version.set_patch_version(0);
   absl::string_view blas_version = "9000";
 
   TF_ASSERT_OK_AND_ASSIGN(

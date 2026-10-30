@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
@@ -50,7 +51,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -170,8 +170,6 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_CONVOLUTION_REORDER;
     case kCopy:
       return THUNK_KIND_COPY;
-    case kCopyDone:
-      return THUNK_KIND_COPY_DONE;
     case kCuDnn:
       return THUNK_KIND_CU_DNN;
     case kCublasLtMatmul:
@@ -182,14 +180,14 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_CUSTOM_KERNEL;
     case kDynamicSlice:
       return THUNK_KIND_DYNAMIC_SLICE;
+    case kDynamicSliceFusion:
+      return THUNK_KIND_DYNAMIC_SLICE_FUSION;
     case kFft:
       return THUNK_KIND_FFT;
     case kGemm:
       return THUNK_KIND_GEMM;
-    case kGroupDone:
-      return THUNK_KIND_GROUP_DONE;
-    case kGroupStart:
-      return THUNK_KIND_GROUP_START;
+    case kGroup:
+      return THUNK_KIND_GROUP;
     case kHostExecuteDone:
       return THUNK_KIND_HOST_EXECUTE_DONE;
     case kHostExecuteStart:
@@ -279,8 +277,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kConvolutionReorder;
     case THUNK_KIND_COPY:
       return kCopy;
-    case THUNK_KIND_COPY_DONE:
-      return kCopyDone;
     case THUNK_KIND_CU_DNN:
       return kCuDnn;
     case THUNK_KIND_CUBLAS_LT_MATMUL:
@@ -291,14 +287,14 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kCustomKernel;
     case THUNK_KIND_DYNAMIC_SLICE:
       return kDynamicSlice;
+    case THUNK_KIND_DYNAMIC_SLICE_FUSION:
+      return kDynamicSliceFusion;
     case THUNK_KIND_FFT:
       return kFft;
     case THUNK_KIND_GEMM:
       return kGemm;
-    case THUNK_KIND_GROUP_DONE:
-      return kGroupDone;
-    case THUNK_KIND_GROUP_START:
-      return kGroupStart;
+    case THUNK_KIND_GROUP:
+      return kGroup;
     case THUNK_KIND_HOST_EXECUTE_DONE:
       return kHostExecuteDone;
     case THUNK_KIND_HOST_EXECUTE_START:
@@ -379,16 +375,15 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kConvolution);
     CASE(kConvolutionReorder);
     CASE(kCopy);
-    CASE(kCopyDone);
     CASE(kCuDnn);
     CASE(kCublasLtMatmul);
     CASE(kCustomCall);
     CASE(kCustomKernel);
     CASE(kDynamicSlice);
+    CASE(kDynamicSliceFusion);
     CASE(kFft);
     CASE(kGemm);
-    CASE(kGroupDone);
-    CASE(kGroupStart);
+    CASE(kGroup);
     CASE(kHostExecuteDone);
     CASE(kHostExecuteStart);
     CASE(kHostRecv);
@@ -453,8 +448,7 @@ bool Thunk::IsCollective() const {
     case kAllToAll:
     case kCollectiveBroadcast:
     case kCollectivePermute:
-    case kGroupDone:
-    case kGroupStart:
+    case kGroup:
     case kRaggedAllToAll:
     case kRecv:
     case kReduceScatter:
@@ -464,12 +458,6 @@ bool Thunk::IsCollective() const {
     default:
       return false;
   }
-}
-
-absl::StatusOr<ThunkProto> Thunk::ToProto() const {
-  return absl::UnimplementedError(absl::StrFormat(
-      "Proto serialization for thunk of type %s is not implemented",
-      typeid(*this).name()));
 }
 
 ThunkMetadataProto Thunk::ToMetadataProto() const {

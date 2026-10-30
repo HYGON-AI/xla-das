@@ -57,12 +57,15 @@ enum class RaggedAllToAllImplType {
   kDecomposer,
   kOneShotWithMultiGpuBarrier,
   kOneShotWithMultiGpuBarrierWithNccl,
+  // TODO: b/482045400 - Remove double-copy approach once testing is done.
+  kOneShotWithMultiGpuBarrierWithNcclZeroCopy,
 };
 
 class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
  public:
   RaggedAllToAllTestBase(bool enable_async, RaggedAllToAllImplType impl_type)
       : CollectiveOpsWithFlagsBase(enable_async, /*enable_p2p_memcpy=*/false,
+                                   /*enable_symmetric_buffer=*/false,
                                    /*memory_size=*/64 * kMB,
                                    /*collectives_memory_size=*/0),
         impl_type_(impl_type) {}
@@ -119,11 +122,11 @@ class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
         module->entry_computation()->parameter_instruction(1);
 
     // The ragged-all-to-all accepts an output tensor as a parameter to allow
-    // buffer reuse. We initialize the output tensor with 0 to make sure that
+    // buffer reuse. We initialize the output tensor with -1 to make sure that
     // we don't accidentally overwrite data that is not part of the
     // ragged-all-to-all update.
     Array<float> output_init_data(output_param->shape().dimensions());
-    output_init_data.Fill(0);
+    output_init_data.Fill(-1);
 
     // Iterate over all replica groups and create random test data for each
     // group.
@@ -245,6 +248,17 @@ class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
       opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier(false);
       opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl(
           true);
+    }
+    // TODO: b/482045400 - Remove double-copy approach once testing is done.
+    if (impl_type_ == RaggedAllToAllImplType::
+                          kOneShotWithMultiGpuBarrierWithNcclZeroCopy &&
+        // Do not enable use_barrier_with_nccl on pre-Hopper architectures
+        Capability().cuda_compute_capability()->IsAtLeastHopper()) {
+      opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
+      opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier(false);
+      opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl(
+          true);
+      opts.set_xla_gpu_experimental_ragged_all_to_all_zero_copy(true);
     }
     return opts;
   }
@@ -408,12 +422,38 @@ TEST_P(RaggedAllToAllTest, RaggedAllToAll_SeveralOps_2GPUs) {
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
                                            kModuleReplicatedStr, kNumReplicas));
 
-  TF_ASSERT_OK(CreateRandomTestData(module.get(),
-                                    /*input_sizes=*/{/*replica_0=*/{1, 1},
-                                                     /*replica_1=*/{3, 1}}));
+  inputs_.clear();
+  inputs_.reserve(kNumReplicas);
+  inputs_.push_back(LiteralUtil::CreateR1<float>({45.0f, 38.0f, 0.0f, 0.0f}));
+  inputs_.push_back(
+      LiteralUtil::CreateR1<float>({41.0f, 16.0f, 110.0f, 107.0f}));
 
-  expected_outputs_[0] = LiteralUtil::CreateR1<float>({45.0, 38.0, 107.0, 0});
-  expected_outputs_[1] = LiteralUtil::CreateR1<float>({41.0, 0, 0, 0});
+  output_init_ = LiteralUtil::CreateR1<float>({-1.0f, -1.0f, -1.0f, -1.0f});
+
+  input_offsets_.clear();
+  input_offsets_.reserve(kNumReplicas);
+  input_offsets_.push_back(LiteralUtil::CreateR1<int32_t>({0, 1}));
+  input_offsets_.push_back(LiteralUtil::CreateR1<int32_t>({0, 3}));
+  input_sizes_.clear();
+  input_sizes_.reserve(kNumReplicas);
+  input_sizes_.push_back(LiteralUtil::CreateR1<int32_t>({1, 1}));
+  input_sizes_.push_back(LiteralUtil::CreateR1<int32_t>({3, 1}));
+
+  output_offsets_.clear();
+  output_offsets_.reserve(kNumReplicas);
+  output_offsets_.push_back(LiteralUtil::CreateR1<int32_t>({0, 0}));
+  output_offsets_.push_back(LiteralUtil::CreateR1<int32_t>({1, 1}));
+  output_sizes_.clear();
+  output_sizes_.reserve(kNumReplicas);
+  output_sizes_.push_back(LiteralUtil::CreateR1<int32_t>({1, 3}));
+  output_sizes_.push_back(LiteralUtil::CreateR1<int32_t>({1, 1}));
+
+  expected_outputs_.clear();
+  expected_outputs_.reserve(kNumReplicas);
+  expected_outputs_.push_back(
+      LiteralUtil::CreateR1<float>({45.0f, 38.0f, 107.0f, -1.0f}));
+  expected_outputs_.push_back(
+      LiteralUtil::CreateR1<float>({41.0f, -1.0f, -1.0f, -1.0f}));
 
   TF_ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
@@ -513,7 +553,7 @@ TEST_P(RaggedAllToAllTest, RaggedAllToAll_2GPUs_S4) {
   expected_outputs_[0] = LiteralUtil::CreateR2<s4>(
       {{s4(1), s4(1)}, {s4(3), s4(3)}, {s4(4), s4(4)}, {s4(5), s4(5)}});
   expected_outputs_[1] = LiteralUtil::CreateR2<s4>(
-      {{s4(2), s4(2)}, {s4(6), s4(6)}, {s4(0), s4(0)}, {s4(0), s4(0)}});
+      {{s4(2), s4(2)}, {s4(6), s4(6)}, {s4(-1), s4(-1)}, {s4(-1), s4(-1)}});
 
   TF_ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
@@ -805,6 +845,61 @@ TEST_P(RaggedAllToAllTest,
   EXPECT_TRUE(LiteralTestUtil::Equal(expected_outputs_[1], results[1]));
 }
 
+// This test checks if RaggedAllToAll kernel preserves the initial output data.
+// It updates every second element of the output with the input data, and the
+// other elements are preserved.
+TEST_P(RaggedAllToAllTest, RaggedAllToAll_2GPUs_PreservesInitialData) {
+  absl::string_view kModuleReplicatedStr = R"(
+  HloModule module, num_partitions=1, replica_count=2
+
+  ENTRY entry {
+    io = f32[4] iota(), iota_dimension=0
+    id = u32[] replica-id()
+    ten = u32[] constant(10)
+    id2 = u32[] multiply(id, ten)
+    id3 = f32[] convert(id2)
+    id4 = f32[4] broadcast(id3)
+    input = f32[4] add(io, id4)
+    output = f32[4] constant({-1,-1,-1,-1})
+    send_sizes = s32[2] constant({1,1})
+    recv_sizes = s32[2] constant({1,1})
+    input_offsets = s32[2] constant({0, 2})
+    step = u32[] constant(2)
+    oof = u32[] multiply(id, step)
+    oof2 = s32[] convert(oof)
+    output_offsets = s32[2] broadcast(oof2)
+
+    ROOT ra2a = f32[4] ragged-all-to-all(input, output, input_offsets,
+    send_sizes, output_offsets, recv_sizes), replica_groups={{0,1}}
+  })";
+
+  const int64_t kNumReplicas = 2;
+  ASSERT_GE(device_count(), kNumReplicas)
+      << "Test requires at least " << kNumReplicas << " devices ("
+      << device_count() << " available)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
+                                           kModuleReplicatedStr, kNumReplicas));
+
+  // No input arguments are needed
+  std::vector<std::vector<Literal*>> arguments(kNumReplicas);
+
+  expected_outputs_.clear();
+  expected_outputs_.reserve(kNumReplicas);
+  expected_outputs_.push_back(
+      LiteralUtil::CreateR1<float>({0.0f, -1.0f, 10.0f, -1.0f}));
+  expected_outputs_.push_back(
+      LiteralUtil::CreateR1<float>({2.0f, -1.0f, 12.0f, -1.0f}));
+
+  TF_ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                          ExecuteReplicated(std::move(module), arguments));
+
+  const std::vector<Literal>& results = execution_result.results;
+  ASSERT_EQ(results.size(), kNumReplicas);
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected_outputs_[0], results[0]));
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected_outputs_[1], results[1]));
+}
+
 TEST_P(RaggedAllToAllTest, RaggedAllToAll_8GPUs) {
   absl::string_view kModuleReplicatedStr = R"(
   HloModule module, num_partitions=1
@@ -956,6 +1051,9 @@ std::string RaggedAllToAllImplTypeName(
       return "one_shot_with_multi_gpu_barrier";
     case RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNccl:
       return "one_shot_with_multi_gpu_barrier_with_nccl";
+    // TODO: b/482045400 - Remove double-copy approach once testing is done.
+    case RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNcclZeroCopy:
+      return "one_shot_with_multi_gpu_barrier_with_nccl_zero_copy";
     default:
       LOG(FATAL) << "Unknown ragged all-to-all implementation type.";
   }
@@ -968,7 +1066,9 @@ INSTANTIATE_TEST_SUITE_P(
         ::testing::Values(
             RaggedAllToAllImplType::kNccl, RaggedAllToAllImplType::kDecomposer,
             RaggedAllToAllImplType::kOneShotWithMultiGpuBarrier,
-            RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNccl)),
+            RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNccl,
+            RaggedAllToAllImplType::
+                kOneShotWithMultiGpuBarrierWithNcclZeroCopy)),
     [](const ::testing::TestParamInfo<std::tuple<bool, RaggedAllToAllImplType>>&
            info) {
       return absl::StrCat(std::get<0>(info.param) ? "async" : "sync", "_",

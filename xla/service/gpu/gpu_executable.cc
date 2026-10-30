@@ -32,6 +32,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -46,6 +47,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "riegeli/bytes/string_writer.h"
 #include "riegeli/bytes/writer.h"
 #include "xla/backends/cpu/target_machine_options.h"
@@ -137,6 +139,7 @@ limitations under the License.
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
@@ -305,6 +308,12 @@ static absl::Status RunThunkPasses(const DebugOptions& debug_options,
 
 absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
     Params params) {
+  if (params.buffer_assignment_proto.has_value() &&
+      params.buffer_assignment != nullptr) {
+    return absl::InvalidArgumentError(
+        "Cannot set both buffer_assignment_proto and buffer_assignment.");
+  }
+
   int64_t next_idx = 0;
   if (params.mlir_allocations.has_value()) {
     next_idx = params.mlir_allocations->size();
@@ -349,7 +358,8 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
       std::move(params.output_info), params.enable_debug_info_manager,
       std::move(params.module_stats), std::move(thunk_sequence_proto),
       std::move(params.executable_abi_version),
-      std::move(params.cpu_target_machine_options)));
+      std::move(params.cpu_target_machine_options),
+      std::move(params.buffer_assignment_proto)));
 }
 
 // Implementation note: HLO profiling is always enabled for GPU executables,
@@ -369,7 +379,8 @@ GpuExecutable::GpuExecutable(
     bool enable_debug_info_manager, ModuleStats module_stats,
     absl::StatusOr<std::vector<ThunkProto>> thunk_sequence_proto,
     stream_executor::ExecutableAbiVersion executable_abi_version,
-    std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options)
+    std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options,
+    std::optional<BufferAssignmentProto> buffer_assignment_proto)
     : Executable(std::move(debug_module)),
       text_(std::move(asm_text)),
       binary_(std::move(binary)),
@@ -384,6 +395,7 @@ GpuExecutable::GpuExecutable(
           mlir_allocations, buffer_assignment.get(), thunk_pass_allocations)),
       allocations_(std::move(mlir_allocations)),
       buffer_assignment_(std::move(buffer_assignment)),
+      buffer_assignment_proto_(std::move(buffer_assignment_proto)),
       thunk_pass_allocations_(std::move(thunk_pass_allocations)),
       alias_info_(std::move(alias_info)),
       debug_buffer_assignment_show_max_(
@@ -1162,7 +1174,7 @@ static GpuCollectives* ResolveGpuCollectives(
     CHECK_OK(collectives)  // Crash OK
         << "Failed to get GPU collectives implementation: "
         << debug_options->xla_gpu_collectives_implementation();
-    return tsl::down_cast<GpuCollectives*>(*collectives);
+    return absl::down_cast<GpuCollectives*>(*collectives);
   }
 
   return GpuCollectives::Default(platform_name);
@@ -1434,7 +1446,7 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
       run_options->run_options().command_buffer_va_range_idx();
   VaRanges* va_ranges = nullptr;
   {
-    absl::MutexLock lock(&va_ranges_mutex_);
+    absl::MutexLock lock(va_ranges_mutex_);
     auto va_ranges_key = std::make_pair(executor, command_buffer_va_range_idx);
     va_ranges = &module_va_ranges_[va_ranges_key];
   }
@@ -1464,7 +1476,7 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
   // Acquire per-executor mutex to protect VA range operations.
   // This ensures only one thread uses the VA ranges at a time for this
   // executor.
-  absl::MutexLock va_lock(&va_ranges->mutex);
+  absl::MutexLock va_lock(va_ranges->mutex);
 
   // Initialize VA ranges if this is first use (va_reservation is null).
   if (va_ranges->va_reservation == nullptr) {
@@ -1638,6 +1650,13 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
   return absl::OkStatus();
 }
 
+std::optional<BufferAssignmentProto> GpuExecutable::buffer_assignment_proto()
+    const {
+  if (buffer_assignment_ != nullptr) {
+    return buffer_assignment_->ToProto();
+  }
+  return buffer_assignment_proto_;
+}
 absl::Status GpuExecutable::ExecuteThunks(
     const BufferAllocations& buffer_allocations,
     const ServiceExecutableRunOptions* run_options) {
@@ -1897,6 +1916,12 @@ absl::StatusOr<GpuExecutableProto> GpuExecutable::ToProto() const {
         allocation->ToProto());
   }
 
+  if (buffer_assignment_ != nullptr) {
+    *proto.mutable_buffer_assignment() = buffer_assignment_->ToProto();
+  } else if (buffer_assignment_proto_.has_value()) {
+    *proto.mutable_buffer_assignment() = buffer_assignment_proto_.value();
+  }
+
   if (has_module()) {
     *proto.mutable_hlo_module_with_config() = module().ToProtoWithConfig();
   }
@@ -1941,6 +1966,18 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
   if (proto.has_hlo_module_with_config()) {
     ASSIGN_OR_RETURN(params.debug_module, HloModule::CreateFromProtoWithConfig(
                                               proto.hlo_module_with_config()));
+    // The HLO module deserialized from the proto carries xla_dump_to from the
+    // process that originally compiled it. Override with the current process's
+    // dump path so that runtime dumps (checksum logs, etc.) land in the correct
+    // per-process directory.
+    if (params.debug_options.has_xla_dump_to()) {
+      params.debug_module->mutable_config()
+          .mutable_debug_options()
+          .set_xla_dump_to(params.debug_options.xla_dump_to());
+    }
+  }
+  if (proto.has_buffer_assignment()) {
+    params.buffer_assignment_proto.emplace(proto.buffer_assignment());
   }
 
   params.mlir_allocations.emplace();

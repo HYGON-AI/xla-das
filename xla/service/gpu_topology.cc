@@ -24,7 +24,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/status_macros.h"  // gloop
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/service/gpu_topology.pb.h"
@@ -76,7 +76,7 @@ GetHostTargetMachineOptions(absl::string_view platform_version) {
         "push2pop2,-raoint,-rdpru,-sgx,-sha512,-shstk,-sm3,-sm4,-sse4a,-tbm,-"
         "uintr,-usermsr,-waitpkg,-widekl,-xop,-zu"};
   }
-  if (platform_version == "oberon_b200") {
+  if (platform_version == "oberon_b200" || platform_version == "oberon_b300") {
     return cpu::TargetMachineOptions{
         "aarch64-linux-gnu", "neoverse-n1",
         "+aes,+crc,+fp-armv8,+lse,+neon,+sha2,+sha3,+sm4,+sve-aes,+sve-sha3,+"
