@@ -7,7 +7,7 @@ and are ordered to match that directory listing.
 ## XLA
 
 - Source: https://github.com/ROCm/xla
-- Fixed source commit: `76282465a00b54ddcef59a2ee95412cd5ecf5551`
+- Fixed source commit: `d5734fef24ced94d13d7f28a5d41868e78415ffa`
 - License: Apache License, Version 2.0
 - Original copyright: Copyright The OpenXLA Authors
 - Hygon modifications: HCU platform adaptations for the DTK toolchain, HCU codegen backend enablement, ROCm stream-executor and hipBLASLt runtime adjustments, Triton compilation-pipeline routing and IR-builder fixes for HCU targets, LLVM/Triton build-patch and workspace updates, and legacy HCU gfx9 target support.
@@ -25,7 +25,7 @@ and are ordered to match that directory listing.
 | Clang Prebuilt Toolchain | https://commondatastorage.googleapis.com/chromium-browser-clang (prebuilt Clang releases from https://github.com/llvm/llvm-project) | `b4160cb94c54f0b31d0ce14694950dac7b6cd83f` | Apache License, Version 2.0 with LLVM Exceptions | `third_party/clang_toolchain` | — |
 | Compute Library | https://github.com/ARM-software/ComputeLibrary | 24.12 | MIT License | `third_party/compute_library` | — |
 | cpuinfo | https://github.com/pytorch/cpuinfo | `8a9210069b5a37dd89ed118a783945502a30a4ae` | BSD-2-Clause License | `third_party/cpuinfo` | — |
-| cuDNN Frontend | https://github.com/NVIDIA/cudnn-frontend | 1.16.1 | MIT License | `third_party/cudnn_frontend` | — |
+| cuDNN Frontend | https://github.com/NVIDIA/cudnn-frontend | 1.22.1 | MIT License | `third_party/cudnn_frontend` | — |
 | Curl | https://github.com/curl/curl | 8.11.0 | curl License | `third_party/curl.BUILD` | — |
 | CUTLASS | https://github.com/NVIDIA/cutlass | 3.8.0 | BSD-3-Clause License | `third_party/cutlass` | — |
 | Cython | https://github.com/cython/cython | 3.1.2 | Apache License, Version 2.0 | `third_party/cython.BUILD` | — |
@@ -49,20 +49,20 @@ and are ordered to match that directory listing.
 | Highwayhash | https://github.com/google/highwayhash | `c13d28517a4db259d738ea4886b1f00352a3cc33` | Apache License, Version 2.0 | `third_party/highwayhash` | — |
 | hwloc | https://github.com/open-mpi/hwloc | 2.7.1 | BSD-3-Clause License | `third_party/hwloc` | — |
 | Implib.so | https://github.com/yugr/Implib.so | `2cce6cab8ff2c15f9da858ea0b68646a8d62aef2` | MIT License | `third_party/implib_so` | — |
-| LLVM Project | https://github.com/llvm/llvm-project | `815edc3ff646392bfee2b381d37dd35e4b04f9c5` | Apache License, Version 2.0 with LLVM Exceptions | `third_party/llvm` | Yes |
+| LLVM Project | https://github.com/llvm/llvm-project | `9a4faee1068c09efbf837cfb7b0f5693b24635f4` | Apache License, Version 2.0 with LLVM Exceptions | `third_party/llvm` | Yes |
 | LLVM OpenMP Runtime | https://github.com/llvm/llvm-project (openmp 10.0.1 release tarball) | 10.0.1 | Apache License, Version 2.0 with LLVM Exceptions | `third_party/llvm_openmp` | — |
 | Intel MKL | https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html | n/a (license-declaration stub) | BSD-3-Clause License (as declared by the vendored Bazel package) | `third_party/mkl` | — |
 | oneDNN (MKL-DNN) | https://github.com/oneapi-src/oneDNN | 3.7.3 | Apache License, Version 2.0 | `third_party/mkl_dnn` | — |
 | MPItrampoline | https://github.com/eschnett/mpitrampoline | `25efb0f7a4cd00ed82bafb8b1a6285fc50d297ed` | MIT License | `third_party/mpitrampoline` | — |
 | nanobind | https://github.com/wjakob/nanobind | `30f12ae6650ecec86042053d522d9af585f269b0` | BSD-3-Clause License | `third_party/nanobind` | — |
 | NASM | https://www.nasm.us/ | 2.14.02 | BSD-2-Clause License | `third_party/nasm` | — |
-| NCCL | https://github.com/NVIDIA/nccl | 2.27.7-1 | Apache License, Version 2.0 | `third_party/nccl` | — |
+| NCCL | https://github.com/NVIDIA/nccl | 2.29.7-1 | Apache License, Version 2.0 | `third_party/nccl` | — |
 | net_zstd (Zstandard) | https://github.com/facebook/zstd | 1.5.7 | BSD-3-Clause License + GPLv2 License | `third_party/net_zstd` | — |
 | NVSHMEM | https://github.com/NVIDIA/nvshmem | 3.1.7-1 | Apache License, Version 2.0 | `third_party/nvshmem` | — |
 | NVTX | https://github.com/NVIDIA/NVTX | 3.5.0 | Apache License, Version 2.0 (with LLVM Exception) | `third_party/nvtx` | — |
 | Google OR-Tools | https://github.com/google/or-tools | 9.11 | Apache License, Version 2.0 | `third_party/ortools` | — |
-| Protocol Buffers | https://github.com/protocolbuffers/protobuf | 6.31.1 | BSD-3-Clause License | `third_party/protobuf` | — |
-| PThreadpool | https://github.com/google/pthreadpool | `0e6ca13779b57d397a5ba6bfdcaa8a275bc8ea2e` | BSD-2-Clause License | `third_party/pthreadpool` | — |
+| Protocol Buffers | https://github.com/protocolbuffers/protobuf | 34.1 | BSD-3-Clause License | `third_party/protobuf` | — |
+| PThreadpool | https://github.com/google/pthreadpool | `9003ee6c137cea3b94161bd5c614fb43be523ee1` | BSD-2-Clause License | `third_party/pthreadpool` | — |
 | absl-py | https://github.com/abseil/abseil-py | 2.1.0 | Apache License, Version 2.0 | `third_party/py/absl_py` | — |
 | ml_dtypes | https://github.com/jax-ml/ml_dtypes | `00d98cd92ade342fef589c0470379abb27baebe9` | Apache License, Version 2.0 | `third_party/py/ml_dtypes` | — |
 | NumPy | https://github.com/numpy/numpy | 2.4.4 (pinned in `requirements_lock_3_11.txt`) | BSD-3-Clause License | `third_party/py/numpy` | — |
@@ -76,19 +76,19 @@ and are ordered to match that directory listing.
 | RobinMap | https://github.com/Tessil/robin-map | 1.3.0 | MIT License | `third_party/robin_map` | — |
 | ROCm Device Libraries | https://github.com/ROCm/llvm-project (`amd/device-libs`) | `04484e4c8fa747928c59c49fd063e6d7eea9fd87` | University of Illinois/NCSA Open Source License | `third_party/rocm_device_libs` | — |
 | Bazel rules_python | https://github.com/bazelbuild/rules_python | 1.8.5 | Apache License, Version 2.0 | `third_party/rules_python` | — |
-| Shardy | https://github.com/openxla/shardy | `22259c179a3045a1dc37b1c1bb119e4e8670b66f` | Apache License, Version 2.0 | `third_party/shardy` | — |
+| Shardy | https://github.com/openxla/shardy | `4b908d99c4be7e7809d57d2b89cf1404d6e52f68` | Apache License, Version 2.0 | `third_party/shardy` | — |
 | six | https://pypi.org/project/six/ | 1.16.0 | MIT License | `third_party/six.BUILD` | — |
-| Slinky | https://github.com/dsharlet/slinky | `4de79eb693dfa2791fa469586c8052287cb3110d` | Apache License, Version 2.0 | `third_party/slinky` | — |
+| Slinky | https://github.com/dsharlet/slinky | `1032be67d7033d736eb6afbb9b51865baa5c77ae` | Apache License, Version 2.0 | `third_party/slinky` | — |
 | Snappy | https://github.com/google/snappy | 1.2.1 | BSD-3-Clause License | `third_party/snappy.BUILD` | — |
 | spdlog | https://github.com/gabime/spdlog | 1.15.2 | MIT License | `third_party/spdlog` | — |
 | SPIRV-LLVM-Translator | https://github.com/KhronosGroup/SPIRV-LLVM-Translator | `dad1f0eaab8047a4f73c50ed5f3d1694b78aae97` | University of Illinois/NCSA Open Source License | `third_party/spirv_llvm_translator` | — |
-| StableHLO | https://github.com/openxla/stablehlo | `3a8886de8515f859875df37578b5caf33f6e52f3` | Apache License, Version 2.0 | `third_party/stablehlo` | — |
+| StableHLO | https://github.com/openxla/stablehlo | `806a6844dfd92cca1ce5391c86dca0ef9e952550` | Apache License, Version 2.0 | `third_party/stablehlo` | — |
 | TensorRT | https://github.com/NVIDIA/TensorRT | `9ec6eb6db39188c9f3d25f49c8ee3a9721636b56` | Apache License, Version 2.0 | `third_party/tensorrt` | — |
 | Transformer Engine | https://github.com/NVIDIA/TransformerEngine | 2.5 | Apache License, Version 2.0 | `third_party/transformer_engine` | — |
-| OpenAI Triton | https://github.com/triton-lang/triton | `678608832e2eed6a2d29462cc08e5c105089bea8` | MIT License | `third_party/triton` | Yes |
-| TensorFlow Standard Library | https://github.com/openxla/xla/tree/main/xla/tsl | vendored with XLA `b6f37ab7767f428fd6f993de5e211643d47d4deb` | Apache License, Version 2.0 | `third_party/tsl`, `xla/tsl` | — |
+| OpenAI Triton | https://github.com/triton-lang/triton | `feb6c04abe15e74faa23f0935ae74c0a38c5e37f` | MIT License | `third_party/triton` | Yes |
+| TensorFlow Standard Library | https://github.com/openxla/xla/tree/main/xla/tsl | vendored with XLA `9b635916ecc6df6efee62d8e4b0c7ef87ef84d69` | Apache License, Version 2.0 | `third_party/tsl`, `xla/tsl` | — |
 | libuv | https://github.com/libuv/libuv | 1.38.0 | MIT License | `third_party/uv` | — |
-| XNNPACK | https://github.com/google/XNNPACK | `132a7b041d8f8ef74172d3a8cd509d6751fdf33d` | BSD-3-Clause License | `third_party/xnnpack` | — |
+| XNNPACK | https://github.com/google/XNNPACK | `bccfe73347861f07a0257c0c546c0babcf3257b8` | BSD-3-Clause License | `third_party/xnnpack` | — |
 | xxd | Part of the Vim project (https://github.com/vim/vim) | Vim 9.1.0917 | Vim License (GPL-compatible) | `third_party/xxd` | — |
 | zlib | https://github.com/madler/zlib | 1.3.1 | zlib License (Permissive) | `third_party/zlib.BUILD` | — |
 
