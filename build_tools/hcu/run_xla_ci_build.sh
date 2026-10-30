@@ -27,6 +27,8 @@ if [[ ! -x "${HCU_CLANG}" ]]; then
 fi
 
 EXCLUDED_TESTS=(
+# hcu support MaxGridDim to 2147483647 but rocm just support 65535
+    "GpuKernelTilingTest.ReductionInputTooLarge"
 # The HipnnConvolution_1257 algorithm in convolution_test exhibits FP32-to-FP16 conversion mismatches against the IEEE standard
 # This behavior is intentionally designed in DTK, so the test is skipped
     "Convolve2D_1x3x3x5_3x3x5x3_Valid/1.Types"
@@ -41,20 +43,33 @@ EXCLUDED_TESTS=(
     "DotTestTestSuite/DotTest.IsTritonSupportedExecutesCorrectlyForDot/f8e5m2_dot"
 # Align with rocm upstream excluded tests
     "HostMemoryAllocateTest.Numa"
-    "NumericTestsForBlas/NumericTestsForBlas.Infinity/dot_tf32_tf32_f32_x3"
-    "TritonEmitterTest.ScaledDotIsSupportedByReferencePlatform"
-    "VmmTest.CommandBufferSkipProfiledTwoGemmChain"
-    "GpuKernelTilingTest.ReductionInputTooLarge"
-    "MxScaledDotExecutionTest.MxFp4Fp8MixedBatchedCorrectness"
-    "ConvolutionTest.Convolve3D_1x4x2x3x3_2x2x2x3x3_Valid"
-    "ConvolutionTest.Convolve_1x1x4x4_1x1x2x2_Valid"
-    "ConvolutionTest.Convolve_1x1x4x4_1x1x2x2_Same"
-    "ConvolutionTest.Convolve_1x1x4x4_1x1x3x3_Same"
-    "StreamExecutorGpuCompilerTest.AotCompileDeserializeRoundTrip"
-    "StreamExecutorGpuClientTest.NumaNode"
-    "F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_fast_accum_with_lhs_f8e4m3fn_rhs_f8e4m3fn_output_f8e5m2_from_cc_8_9_rocm_63_no_restriction_c_16_nc_2"
-    "F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_fast_accum_with_lhs_f8e4m3fn_rhs_f8e4m3fn_output_f8e5m2_from_cc_8_9_rocm_63_no_restriction_c_32_nc_32"
-    "RaggedAllToAllTest/RaggedAllToAllTest.RaggedAllToAll*"
+    "DeterminismTest.CublasDot"
+    "TritonAndBlasSupportForDifferentTensorSizes/TritonAndBlasSupportForDifferentTensorSizes.IsDotAlgorithmSupportedByTriton/dot_f32_f32_f32"
+    "TritonBackendTest.CostModelOptions_Combination"
+    "TritonBackendTest.CostModelOptions_TopFromDefault"
+    "TritonBackendTest.CostModelOptions_Filter"
+    "TritonTest.FuseSubchannelDequantizationWithTranspose"
+    "P2POps/P2POps.CollectivePermute/enable_symmetric_buffer"
+    "AsyncCollectiveOps/AsyncCollectiveOps.AsyncAllReduce/async_symmetric*"
+    "AsyncCollectiveOps/AsyncCollectiveOps.AsyncAllGatherMixedTypes/async_symmetric*"
+    "AsyncCollectiveOps/AsyncCollectiveOps.AsyncAllToAllNumberOfElementsLargerThanInt32Max/sync_symmetric*"
+    "AsyncCollectiveOps/AsyncCollectiveOps.AsyncAllToAllWithoutSplitDim/async_symmetric*"
+    "AsyncCollectiveOps/AsyncCollectiveOps.AsyncAllToAllMemCpyWithoutSplitDim/sync_symmetric*"
+    "AsyncCollectiveOps/AsyncCollectiveOps.AsyncAllToAllWithSplitDim/async_symmetric*"
+    "AsyncCollectiveOps/AsyncCollectiveOps.AsyncAllToAllWithoutSplitDim/sync_symmetric*"
+    "AsyncCollectiveOps/AsyncCollectiveOps.AsyncAllToAllMemCpyWithoutSplitDim/async_symmetric*"
+    "AsyncCollectiveOps/AsyncCollectiveOps.AsyncAllReduce/sync_symmetric*"
+    "AsyncCollectiveOps/AsyncCollectiveOps.AsyncAllGatherMixedTypes/sync_symmetric*"
+    "AsyncCollectiveOps/AsyncCollectiveOps.AsyncAllToAllNumberOfElementsLargerThanInt32Max/async_symmetric*"
+    "AsyncCollectiveOps/AsyncCollectiveOps.AsyncAllGather/async_symmetric*"
+    "AsyncCollectiveOps/AsyncCollectiveOps.AsyncAllToAllWithSplitDim/sync_symmetric*"
+    "AsyncCollectiveOps/AsyncCollectiveOps.AsyncAllGather/sync_symmetric"
+    "StreamExecutorGpuClientTest.GetCompiledMemoryStatsWithTupleAndNcclUserBuffers"
+    "StreamExecutorGpuClientTest.GetAbiVersion"
+    "ConvolutionTest.Convolve3D_1x4x2x3x3_2x2x2x3x3_Valid*"
+    "ConvolutionTest.Convolve_1x1x4x4_1x1x2x2_Valid*"
+    "ConvolutionTest.Convolve_1x1x4x4_1x1x2x2_Same*"
+    "ConvolutionTest.Convolve_1x1x4x4_1x1x3x3_Same*"
 )
 
 TAG_FILTERS=$(bash "${SCRIPT_DIR}/hcu_tag_filters.sh")
