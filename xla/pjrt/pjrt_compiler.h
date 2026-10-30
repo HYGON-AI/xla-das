@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/proto/pjrt_partial_program.pb.h"
 #include "xla/pjrt/proto/topology_description.pb.h"
+#include "xla/shape.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/fingerprint.h"
@@ -59,10 +60,14 @@ inline const char* RocmName() {
   static constexpr char kRocmName[] = "rocm";
   return kRocmName;
 }
-inline const char* SyclName() {
-  static constexpr char kSyclName[] = "sycl";
-  return kSyclName;
+inline const char* OneapiName() {
+  static constexpr char kOneapiName[] = "oneapi";
+  return kOneapiName;
 }
+// Temporarily keep SyclName() as there are references to it in Tensorflow.
+// TODO(intel-tf): Remove this function once Tensorflow is updated to use
+// OneapiName() instead of SyclName()
+inline const char* SyclName() { return OneapiName(); }
 inline const char* TpuName() {
   static constexpr char kTpuName[] = "tpu";
   return kTpuName;
@@ -79,10 +84,15 @@ inline PjRtPlatformId RocmId() {
   static const PjRtPlatformId kRocmId = tsl::Fingerprint64(RocmName());
   return kRocmId;
 }
-inline PjRtPlatformId SyclId() {
-  static const PjRtPlatformId kSyclId = tsl::Fingerprint64(SyclName());
-  return kSyclId;
+inline PjRtPlatformId OneapiId() {
+  static const PjRtPlatformId kOneapiId = tsl::Fingerprint64(OneapiName());
+  return kOneapiId;
 }
+
+// Temporarily keep SyclId() as there are references to it in Jaxlib.
+// TODO(intel-tf): Remove this function once Jaxlib is updated to use
+// OneapId() instead of SyclId()
+inline PjRtPlatformId SyclId() { return OneapiId(); }
 inline PjRtPlatformId TpuId() {
   static const PjRtPlatformId kTpuId = tsl::Fingerprint64(TpuName());
   return kTpuId;
@@ -366,6 +376,16 @@ class PjRtTopologyDescription {
   virtual absl::StatusOr<Layout> GetDefaultLayout(
       PrimitiveType element_type, absl::Span<const int64_t> dims) const = 0;
 
+  // Returns the canonical shape for a memory_space with an optionally provided
+  // layout. This is useful for predicting the full shape + layout of a buffer
+  // after it is transferred to a particular memory space.
+  virtual absl::StatusOr<xla::Shape> MakeCanonicalShapeForMemorySpace(
+      int memory_space_kind_id, xla::Shape shape,
+      const xla::Layout* layout) const {
+    return absl::UnimplementedError(
+        "MakeCanonicalShapeForMemorySpace is unsupported.");
+  }
+
   virtual absl::StatusOr<PjRtTopologyDescriptionProto> ToProto() const {
     return absl::UnimplementedError("ToProto is unsupported.");
   }
@@ -484,11 +504,13 @@ struct CompilationPhaseFunctions {
       compiler;
 
   // `validator`: A function that performs plugin-specific validation of the
-  // input programs for a given compilation phase. It takes a `std::vector` of
-  // `PjRtPartialProgramProto` as input and returns `absl::OkStatus()` if
-  // validation is successful; otherwise, it returns an `absl::Status`
-  // indicating the reason for failure (e.g., incompatible `program_format`).
-  std::function<absl::Status(const std::vector<PjRtPartialProgramProto>&)>
+  // input programs for a given compilation phase. It takes a `CompileOptions`
+  // instance and a `std::vector` of `PjRtPartialProgramProto` as input and
+  // returns `absl::OkStatus()` if validation is successful; otherwise, it
+  // returns an `absl::Status` indicating the reason for failure (e.g.,
+  // incompatible `program_format`).
+  std::function<absl::Status(CompileOptions options,
+                             const std::vector<PjRtPartialProgramProto>&)>
       validator;
 };
 

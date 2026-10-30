@@ -40,10 +40,12 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "xla/codegen/tiling/experimental/scheduling.h"
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
+#include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/tiled_hlo_instruction.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -92,10 +94,11 @@ class EmitterContext {
 
   std::pair<mlir::Value, Interval> GetSequentialDimValue(
       gpu::experimental::TiledDimId sequential_dim_id) const {
-    CHECK(sequential_dim_id_to_value_.contains(sequential_dim_id))
+    auto it = sequential_dim_id_to_value_.find(sequential_dim_id);
+    QCHECK(it != sequential_dim_id_to_value_.end())
         << "Sequential dim id " << sequential_dim_id
         << " not found in the induction var map.";
-    return sequential_dim_id_to_value_.at(sequential_dim_id);
+    return it->second;
   }
 
   bool MapSymbolIdToSequentialDimValue(
@@ -352,7 +355,7 @@ absl::StatusOr<mlir::Type> GetMlirType(
 
 // Function to get the MLIR types from a HloFusionInstruction.
 absl::StatusOr<llvm::SmallVector<mlir::Type>> GetFnArgTypes(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     absl::Span<mlir::Type> opaque_args_types,
     const std::optional<stream_executor::GpuComputeCapability>& gpu_cc);
 
@@ -360,33 +363,6 @@ absl::StatusOr<llvm::SmallVector<mlir::Type>> GetFnArgTypes(
 absl::Status CheckConcatenateOperands(
     const HloConcatenateInstruction& hlo_concat, int64_t concat_dim_tile_size);
 
-// Returns `shape` without all its unit dimensions, as well as the index of the
-// remaining dimensions in the original `shape`.
-std::pair<llvm::SmallVector<int64_t>, llvm::SmallVector<int64_t>>
-CollapseUnitDims(llvm::ArrayRef<int64_t> shape,
-                 llvm::ArrayRef<int64_t> counterpart_shape);
-
-enum class DotOperandSide { kLhs, kRhs };
-
-// Canonicalizes the given operand of a dot operation, i.e. make it a 2D tensor,
-// and make sure that the contracting dimension is where we expect it to be for
-// the given side (the second dimension for LHS, the first dimension for the
-// RHS).
-//
-// If it is a scaled-dot scale operand then we drop the extra dims only
-// when they equal to 1  and are matching with the corresponding operand.
-// Example:
-//   when lhs_scale operand with shape [1,128, 1] (passed as operand parameter)
-//   and lhs operand with shape [1,128, 32] (passed as counterpart_operand
-//   parameter)
-//   the function will drop only the first dim and will keep the last one
-//   because the last one of the lhs operand is not equal to 1.
-//
-// Returns an error if canonicalization is not possible.
-absl::StatusOr<TensorValue> CanonicalizeDotOperand(
-    mlir::ImplicitLocOpBuilder& b, TensorValue operand,
-    int64_t contracting_dim_idx, DotOperandSide side,
-    TensorValue counterpart_operand = nullptr);
 
 absl::StatusOr<TensorValue> EmitTiledReshape(mlir::ImplicitLocOpBuilder& b,
                                              llvm::ArrayRef<int64_t> tile_sizes,
@@ -397,6 +373,11 @@ TensorValue EmitTiledTranspose(mlir::ImplicitLocOpBuilder& b,
                                llvm::SmallVector<int64_t> dimensions,
                                TensorValue input);
 
+// Emits a reduction computation.
+absl::Status EmitReduceComputation(mlir::ImplicitLocOpBuilder& b,
+                                   const HloInstruction* hlo_reduction,
+                                   const HloComputation* reduction_computation,
+                                   mlir::Operation* reduction);
 }  // namespace xla::xtile
 
 #endif  // XLA_CODEGEN_XTILE_CODEGEN_EMITTER_HELPERS_H_

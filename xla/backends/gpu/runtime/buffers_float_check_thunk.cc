@@ -77,15 +77,11 @@ BuffersDebugFloatCheckThunk::BuffersDebugFloatCheckThunk(
 }
 absl::Status BuffersDebugFloatCheckThunk::Initialize(
     const InitializeParams& params) {
-  if (params.executor->GetPlatform()->id() != se::cuda::kCudaPlatformId) {
-    VLOG(1) << "Buffer float checking not supported on non-CUDA platforms, "
-               "skipping";
-    return absl::OkStatus();
-  }
-  if (!params.executor->GetDeviceDescription()
+  if (params.executor->GetPlatform()->id() == se::cuda::kCudaPlatformId &&
+      !params.executor->GetDeviceDescription()
            .cuda_compute_capability()
            .IsAtLeastPascal()) {
-    VLOG(1)
+    LOG_FIRST_N(WARNING, 1)
         << "Buffer float checking not supported on CUDA architectures older "
            "than Pascal due to missing atomic fetch_add with system scope, "
            "skipping";
@@ -173,7 +169,7 @@ absl::Status CheckFloatsAndLog(
   // results of the previous FloatCheck operation are available.
   TF_RETURN_IF_ERROR(reduce_append_kernel.Launch(
       thread_dim, se::BlockDim(1, 1, 1), stream, tmp_ptr,
-      std::min(tmp_ptr.ElementCount(), num_blocks), entry_id,
+      std::min<uint64_t>(tmp_ptr.ElementCount(), num_blocks), entry_id,
       buffer_debug_log.GetDeviceHeader(), buffer_debug_log.GetDeviceEntries()));
 
   return absl::OkStatus();
@@ -260,6 +256,10 @@ std::string BuffersDebugFloatCheckThunk::ToString(int indent) const {
                     ", buffer: ", buffer.ToString());
   }
   return result;
+}
+absl::StatusOr<ThunkProto> BuffersDebugFloatCheckThunk::ToProto() const {
+  return absl::InvalidArgumentError(
+      "BuffersDebugFloatCheckThunk can't be serialized.");
 }
 
 }  // namespace xla::gpu

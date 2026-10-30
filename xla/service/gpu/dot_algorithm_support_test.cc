@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -99,7 +100,8 @@ std::string TestParamsToString(
       primitive_util::LowercasePrimitiveTypeName(params.rhs_storage_type),
       primitive_util::LowercasePrimitiveTypeName(params.output_storage_type),
       params.min_cuda_capability.major, params.min_cuda_capability.minor,
-      params.min_rocm_version.major(), params.min_rocm_version.minor(),
+      params.min_rocm_version.major_version(),
+      params.min_rocm_version.minor_version(),
       BackendRestrictionToString(params.backend_restriction),
       params.sizes.contracting_size, params.sizes.non_contracting_size);
 }
@@ -171,6 +173,17 @@ TEST_P(DotAlgorithmSupportTest, AlgorithmIsSupportedFromCudaCapability) {
   if (const auto* ccc = gpu_cc.cuda_compute_capability()) {
     is_algorithm_supported =
         ccc->SupportsAllFeaturesOf(params.min_cuda_capability);
+
+    // CublasLt does not support FP8 fast accumulation.
+    DebugOptions debug_options = GetDebugOptionsForTest();
+    if (debug_options.xla_gpu_enable_cublaslt() &&
+        params.algorithm ==
+            PrecisionConfig::ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM &&
+        params.lhs_storage_type == F8E4M3FN &&
+        params.rhs_storage_type == F8E4M3FN &&
+        params.output_storage_type == F8E5M2) {
+      is_algorithm_supported = false;
+    }
   } else if (const auto* rcc = gpu_cc.rocm_compute_capability()) {
     is_algorithm_supported = rcc->gfx9_mi100_or_later();
     if (GetDeviceDescription().runtime_version() < params.min_rocm_version &&
@@ -190,18 +203,6 @@ TEST_P(DotAlgorithmSupportTest, AlgorithmIsSupportedFromCudaCapability) {
       GTEST_SKIP() << AlgorithmToString(params.algorithm)
                    << " not supported on MI200.";
     }
-  }
-
-  // CublasLt does not support FP8 fast accumulation.
-  const bool is_cublaslt_target = gpu_cc.cuda_compute_capability() != nullptr;
-  DebugOptions debug_options = GetDebugOptionsForTest();
-  if (debug_options.xla_gpu_enable_cublaslt() && is_cublaslt_target &&
-      params.algorithm ==
-          PrecisionConfig::ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM &&
-      params.lhs_storage_type == F8E4M3FN &&
-      params.rhs_storage_type == F8E4M3FN &&
-      params.output_storage_type == F8E5M2) {
-    is_algorithm_supported = false;
   }
 
   if (is_algorithm_supported) {

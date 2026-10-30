@@ -38,7 +38,7 @@ limitations under the License.
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
@@ -58,14 +58,12 @@ limitations under the License.
 #include "xla/codegen/emitters/ir/xla_ops.h"  // IWYU pragma: keep
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
-#include "xla/core/collectives/reduction_kind.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/layout_util.h"
+#include "xla/hlo/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/mlir/utils/type_util.h"
-#include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -97,9 +95,10 @@ using ReductionComputationEmitter = absl::AnyInvocable<xtile::TensorValue(
     mlir::ImplicitLocOpBuilder&, xtile::TensorValue, xtile::TensorValue)>;
 
 // The main memory space on a device (HBM).
+// Use GPU dialect address space which is platform-independent.
 static constexpr auto kGlobalAddressSpace =
-    static_cast<std::underlying_type_t<mlir::NVVM::NVVMMemorySpace>>(
-        mlir::NVVM::NVVMMemorySpace::Global);
+    static_cast<std::underlying_type_t<mlir::gpu::AddressSpace>>(
+        mlir::gpu::AddressSpace::Global);
 
 // Metadata arguments for the collective emitter.
 // device_rank, signal_value, signal_buffers.
@@ -199,14 +198,6 @@ absl::StatusOr<AllReduceEmitterContext> CreateAllReduceEmitterContext(
                        8);
   ctx.strategy = GetAllReduceStrategy(input_byte_size,
                                       /*is_multimem_enabled=*/false);
-  auto replicaGroups =
-      llvm::dyn_cast<mlir::DenseIntElementsAttr>(op.getReplicaGroups());
-  if (!replicaGroups) {
-    return absl::UnimplementedError(
-        "ReplicaGroups is not a DenseIntElementsAttr (v3 not supported yet in "
-        "Triton emitter).");
-  }
-  ctx.world_size = replicaGroups.getShapedType().getDimSize(1);
   ctx.op = op;
 
   return ctx;
@@ -395,6 +386,14 @@ class AllReduceEmitter {
     remote_input_buffers_ = ctx_.xtile_entry_fn.getArgument(start_idx + 3);
 
     // 2. Constants and types.
+    auto replica_groups =
+        xla::ConvertReplicaGroups(ctx_.op.getReplicaGroups(), ctx_.op);
+    if (!replica_groups.ok()) {
+      ctx_.op.emitOpError(replica_groups.status().ToString());
+      return absl::InternalError(replica_groups.status().ToString());
+    }
+    ctx_.world_size = (*replica_groups)->num_devices_per_group();
+
     elem_type_ = mlir::getElementTypeOrSelf(ctx_.input_tile.getType());
     elem_storage_type_ = xtile::StorageType(elem_type_);
     ptr_to_i64_type_ =

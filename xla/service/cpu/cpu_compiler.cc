@@ -23,7 +23,6 @@ limitations under the License.
 #include <limits>
 #include <memory>
 #include <optional>
-#include <stack>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -34,10 +33,12 @@ limitations under the License.
 // IWYU pragma: no_include "llvm/Config/Disassemblers.def.inc"
 // IWYU pragma: no_include "llvm/Config/Targets.def.inc"
 
+#include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -129,6 +130,7 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/stochastic_convert_decomposer.h"
 #include "xla/hlo/transforms/literal_canonicalizer.h"
 #include "xla/hlo/transforms/operand_upcaster.h"
+#include "xla/hlo/transforms/propagate_call_metadata.h"
 #include "xla/hlo/transforms/shape_canonicalizer.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/batch_dot_simplification.h"
@@ -165,6 +167,7 @@ limitations under the License.
 #include "xla/service/call_graph.h"
 #include "xla/service/call_inliner.h"
 #include "xla/service/change_op_data_type.h"
+#include "xla/service/compiled_module.h"
 #include "xla/service/compiler.h"
 #include "xla/service/conditional_simplifier.h"
 #include "xla/service/conditional_to_select.h"
@@ -207,6 +210,7 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/service/map_inliner.h"
+#include "xla/service/multi_module_driver.h"
 #include "xla/service/scatter_expander.h"
 #include "xla/service/scatter_simplifier.h"
 #include "xla/service/select_and_scatter_expander.h"
@@ -229,14 +233,14 @@ limitations under the License.
 #include "xla/stream_executor/host/host_platform_id.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
+#include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 #include "tsl/platform/cpu_info.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/profiler/lib/traceme.h"
@@ -283,7 +287,7 @@ static tsl::thread::ThreadPool* GetCompilationThreadPool() {
 // Returns task runner that uses the global compilation thread pool.
 static cpu::JitCompiler::TaskRunner GetCompilationTaskRunner() {
   return [](cpu::JitCompiler::Task task) {
-    GetCompilationThreadPool()->Schedule(std::move(task));
+    cpu::GetCpuCompilationThreadPool()->Execute(std::move(task));
   };
 }
 
@@ -337,6 +341,10 @@ inline bool IsOneDnnCompatible(bool is_aot_compile) {
   return false;
 }
 
+tsl::Executor* GetCpuCompilationThreadPool() {
+  return GetCompilationThreadPool()->AsExecutor();
+}
+
 CpuCompiler::CpuCompiler() {
   // Initialize LLVM the first time the CpuCompiler is initialized.
   static bool llvm_initialized = []() {
@@ -354,6 +362,7 @@ absl::StatusOr<std::vector<std::unique_ptr<Executable>>> CpuCompiler::Compile(
     return Unimplemented(
         "Model partitioning not implemented for the CPU compiler");
   }
+
   return LLVMCompiler::Compile(std::move(hlo_module), stream_execs, options);
 }
 
@@ -406,15 +415,11 @@ class CollectProfileCandidates : public DfsHloVisitorWithDefault {
   absl::Status HandleConditional(HloInstruction* conditional) override {
     TF_RETURN_IF_ERROR(DefaultAction(conditional));
 
-    CollectProfileCandidates candidates_for_true(hlo_to_profile_idx_,
-                                                 assigned_indices_);
-    TF_RETURN_IF_ERROR(
-        conditional->true_computation()->Accept(&candidates_for_true));
-
-    CollectProfileCandidates candidates_for_false(hlo_to_profile_idx_,
-                                                  assigned_indices_);
-    TF_RETURN_IF_ERROR(
-        conditional->false_computation()->Accept(&candidates_for_false));
+    for (HloComputation* branch : conditional->branch_computations()) {
+      CollectProfileCandidates candidates_for_branch(hlo_to_profile_idx_,
+                                                     assigned_indices_);
+      TF_RETURN_IF_ERROR(branch->Accept(&candidates_for_branch));
+    }
 
     return absl::OkStatus();
   }
@@ -467,8 +472,14 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
     absl::string_view name, HloModule* module, bool use_fusion_emitters,
     bool use_onednn_custom_call) {
   // Run the following passes to a fixed point.
+  const bool fast_compile =
+      module->config().debug_options().xla_cpu_opt_preset() ==
+      xla::DebugOptions::CPU_OPT_PRESET_FAST_COMPILE;
+
+  const int iteration_limit = fast_compile ? 4 : 25;
+
   auto pipeline =
-      std::make_unique<HloPassFix<HloPassPipeline>>(std::string(name));
+      HloPassFix<HloPassPipeline>::Create(iteration_limit, std::string(name));
   AddHloVerifier(pipeline.get(), HloVerifierOpts{},
                  /*debug_only=*/true);
 
@@ -479,6 +490,8 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
       !module->config().debug_options().xla_cpu_enable_fast_min_max());
   options.set_supports_non_canonical_dots(false);
   options.set_executing_on_cpu(true);
+  options.set_enable_fast_math(
+      module->config().debug_options().xla_cpu_enable_fast_math());
   options.set_enable_onednn_support(use_onednn_custom_call);
   options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
   pipeline->AddPass<AlgebraicSimplifier>(options);
@@ -553,9 +566,6 @@ auto LibrarySupportsConvolution(
 
 auto LibrarySupportsDot(HloModule* module,
                         TargetMachineFeatures* target_machine_features) {
-  // TODO(b/468895209): Stop calling YNNPACK from regular Dot thunks. All YNN
-  // Dots should be wrapped in an `__ynn_fusion` fusion region and processed in
-  // `YnnFusionThunk`.
   const bool ynnpack_dot_enabled = absl::c_linear_search(
       module->config().debug_options().xla_cpu_experimental_ynn_fusion_type(),
       DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_DOT);
@@ -1138,6 +1148,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     pipeline.AddPass<SmallWhileLoopHoistingPass>(byte_threshold);
   }
 
+  pipeline.AddPass<PropagateCallMetadata>();
   pipeline.AddPass<HloDCE>();
   return pipeline.Run(module).status();
 }
@@ -1245,8 +1256,18 @@ absl::Status CreateHloProfilingArtifacts(
 }  // namespace
 
 absl::StatusOr<std::unique_ptr<HloModule>> CpuCompiler::RunHloPasses(
-    std::unique_ptr<HloModule> module, se::StreamExecutor* /*stream_exec*/,
+    std::unique_ptr<HloModule> module, se::StreamExecutor* stream_exec,
     const CompileOptions& options) {
+  if (MultiModuleDriver::ShouldProcess(*module)) {
+    VLOG(1) << "Triggering HLO module splitting for module: " << module->name();
+    MultiModuleDriver driver(
+        [this, stream_exec](std::unique_ptr<HloModule> m,
+                            const CompileOptions& opts) {
+          return this->RunHloPasses(std::move(m), stream_exec, opts);
+        },
+        GetCpuCompilationThreadPool());
+    return driver.Compile(std::move(module), {stream_exec}, options);
+  }
   auto& config = module->config();
 
   std::unique_ptr<llvm::TargetMachine> jit_target_machine;
@@ -1321,67 +1342,6 @@ CreateOrcJITPostCompilationHook(const HloModule* hlo_module,
   };
 }
 
-struct ComputationToEmit {
-  HloComputation* computation;
-
-  // Are we emitting this computation with fast-math reassociation enabled?
-  // We enable reassociation for reductions because it has a significant
-  // performance impact.
-  bool allow_reassociation;
-
-  bool operator==(const ComputationToEmit& other) const {
-    return computation == other.computation &&
-           allow_reassociation == other.allow_reassociation;
-  }
-
-  template <typename H>
-  friend H AbslHashValue(H h, const ComputationToEmit& c) {
-    return H::combine(std::move(h), c.computation, c.allow_reassociation);
-  }
-};
-
-std::vector<ComputationToEmit> SubcomputationEmissionOrder(
-    HloComputation* root) {
-  absl::flat_hash_set<ComputationToEmit> visited;
-  std::vector<ComputationToEmit> postorder;
-
-  // agenda of (node, leave) pairs.
-  std::stack<std::pair<ComputationToEmit, bool>> agenda;
-  agenda.emplace(ComputationToEmit{root, false}, false);
-  while (!agenda.empty()) {
-    ComputationToEmit c;
-    bool leave;
-    std::tie(c, leave) = agenda.top();
-    agenda.pop();
-
-    if (leave) {
-      postorder.push_back(c);
-      continue;
-    }
-
-    if (visited.insert(c).second) {
-      agenda.emplace(c, true);
-      for (auto* instruction : c.computation->instructions()) {
-        bool allow_reassociation =
-            instruction->opcode() == HloOpcode::kAllReduce ||
-            instruction->opcode() == HloOpcode::kReduce ||
-            instruction->opcode() == HloOpcode::kReduceWindow;
-        auto cc = absl::MakeSpan(instruction->called_computations());
-        for (auto it = cc.rbegin(); it != cc.rend(); ++it) {
-          HloComputation* called_computation = *it;
-          ComputationToEmit callee{
-              called_computation, c.allow_reassociation || allow_reassociation};
-          if (!visited.contains(callee)) {
-            agenda.emplace(callee, false);
-          }
-        }
-      }
-    }
-  }
-  DCHECK(!postorder.empty() && postorder.back().computation == root);
-  postorder.pop_back();
-  return postorder;
-}
 
 }  // namespace
 
@@ -1397,10 +1357,14 @@ static void RemoveUnusedSymbols(llvm::Module& module) {
   llvm::SmallVector<llvm::Function*> unused_functions;
 
   for (llvm::GlobalVariable& gv : module.globals()) {
-    if (gv.use_empty()) unused_globals.push_back(&gv);
+    if (gv.use_empty()) {
+      unused_globals.push_back(&gv);
+    }
   }
   for (llvm::Function& f : module.functions()) {
-    if (f.isDeclaration() && f.use_empty()) unused_functions.push_back(&f);
+    if (f.isDeclaration() && f.use_empty()) {
+      unused_functions.push_back(&f);
+    }
   }
 
   for (auto* gv : unused_globals) {
@@ -1459,7 +1423,9 @@ static CompiledSymbolsPart CollectCompiledSymbolsPart(
   auto find_kernel =
       [&](llvm::StringRef name) -> std::optional<IrEmitter2::KernelInfo> {
     for (auto& k : ir_emitter.kernels()) {
-      if (k.name == name) return k;
+      if (k.name == name) {
+        return k;
+      }
     }
     return std::nullopt;
   };
@@ -1467,7 +1433,9 @@ static CompiledSymbolsPart CollectCompiledSymbolsPart(
   auto find_comparator =
       [&](llvm::StringRef name) -> std::optional<IrEmitter2::ComparatorInfo> {
     for (auto& c : ir_emitter.comparators()) {
-      if (c.name == name) return c;
+      if (c.name == name) {
+        return c;
+      }
     }
     return std::nullopt;
   };
@@ -1501,7 +1469,9 @@ static bool HasLargeConstants(llvm::Module& module) {
 
     llvm::Constant* initializer = g.getInitializer();
     if (auto* arr = llvm::dyn_cast<llvm::ArrayType>(initializer->getType())) {
-      if (arr->getNumElements() > kMaxConstantSize) return true;
+      if (arr->getNumElements() > kMaxConstantSize) {
+        return true;
+      }
     }
   }
   return false;
@@ -1553,7 +1523,7 @@ static absl::StatusOr<std::unique_ptr<llvm::Module>> ExtractKernelsFromModule(
       llvm::CloneModule(*original_module, vmap, should_clone_definition);
 
   // Erase the cloned symbols from the original module.
-  for (const auto& kernel_name : kernels) {
+  for (const auto& kernel_name : tsl::SortedRange(kernels)) {
     llvm::Function* to_be_removed = original_module->getFunction(kernel_name);
     if (to_be_removed == nullptr) {
       return Internal("Cannot remove kernel %s: cannot be found in module %s",
@@ -1691,8 +1661,14 @@ CpuCompiler::CompileCpuExecutable(
   ModuleHook pre_optimization_ir_hook;
   ModuleHook post_optimization_ir_hook;
   std::tie(pre_optimization_ir_hook, post_optimization_ir_hook) =
-      GetIRModuleHooks(*module, user_pre_optimization_hook_,
-                       user_post_optimization_hook_);
+      GetIRModuleHooks(
+          *module,
+          [this](const llvm::Module& module) {
+            CallUserPreOptimizationHook(module);
+          },
+          [this](const llvm::Module& module) {
+            CallUserPostOptimizationHook(module);
+          });
 
   // Compile must be thread-safe so create a new LLVM context for the module.
   mlir::MLIRContext mlir_context;
@@ -1945,7 +1921,7 @@ CpuCompiler::CompileCpuExecutable(
                            {{"num_extra_parts", num_extra_parts}});
     });
     for (const auto& [backend_extra_options, kernels] :
-         backend_extra_options_to_kernels) {
+         tsl::KeySortedRange(backend_extra_options_to_kernels)) {
       TF_ASSIGN_OR_RETURN(std::unique_ptr<llvm::Module> new_module,
                           ExtractKernelsFromModule(llvm_module.get(), kernels));
       AddXlaBackendExtraOptionsAsModuleFlag(new_module.get(),
@@ -2340,9 +2316,10 @@ HloCostAnalysis::ShapeSizeFunction CpuCompiler::ShapeSizeBytesFunction() const {
 
 absl::StatusOr<std::unique_ptr<CompiledModule>> CpuCompiler::Export(
     Executable* executable) {
-  auto* cpu_executable = tensorflow::down_cast<CpuExecutable*>(executable);
-  if (!cpu_executable)
+  auto* cpu_executable = absl::down_cast<CpuExecutable*>(executable);
+  if (!cpu_executable) {
     return Internal("Could not downcast Executable to CpuExecutable");
+  }
 
   // Export object files for all dylibs.
   std::vector<ObjFileProto> obj_files;

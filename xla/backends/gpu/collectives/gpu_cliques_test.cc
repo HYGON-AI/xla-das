@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
@@ -45,7 +46,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -466,7 +466,7 @@ TEST(GpuCliquesTest, DifferentCollectivesProduceDifferentCliques) {
   // Acquire clique with loopback collectives for the same key.
   ASSERT_OK_AND_ASSIGN(Collectives * loopback_base,
                        CollectivesRegistry::Get("GPU", "loopback"));
-  auto* loopback = tsl::down_cast<GpuCollectives*>(loopback_base);
+  auto* loopback = absl::down_cast<GpuCollectives*>(loopback_base);
 
   std::vector<std::shared_ptr<LockableGpuClique::Lock>> loopback_cliques;
   {

@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -42,9 +43,9 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/fingerprint.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 
@@ -182,6 +183,10 @@ StreamExecutorGpuTopologyDescription::
 
 absl::StatusOr<Layout> StreamExecutorGpuTopologyDescription::GetDefaultLayout(
     PrimitiveType element_type, absl::Span<const int64_t> dims) const {
+  if (!primitive_util::IsArrayType(element_type)) {
+    return InvalidArgument("Element type %s does not support layout",
+                           PrimitiveType_Name(element_type));
+  }
   Shape shape = ShapeUtil::MakeShape(element_type, dims);
   Layout layout = LayoutUtil::GetWithDefaultLayout(shape).layout();
   // `GetWithDefaultLayout` returns a padded layout for sub-byte types since the
