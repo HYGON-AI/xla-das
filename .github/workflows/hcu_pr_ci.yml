@@ -14,7 +14,7 @@ permissions:
 on:
   pull_request_target:
     branches:
-      - jax/0.10.0-das
+      - main
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "xla/**"

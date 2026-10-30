@@ -8,7 +8,7 @@
 # Repositories variables consumed below:
 #   HCU_PYTHON_VERSION              optional, default set to 3.11
 #   HCU_JAX_DAS_REPO                optional, default set to HYGON-AI/jax-das
-#   HCU_JAX_DAS_REF                 optional, default set to v0.10.0-das
+#   HCU_JAX_DAS_REF                 optional, default set to main
 #   HCU_DTK_VERSION                 optional, default set to 26.04. The tarball URL is derived from it.
 
 name: CI HCU
@@ -17,7 +17,7 @@ permissions:
 on:
   push:
     branches:
-      - jax/0.10.0-das
+      - main
     paths:
       - "xla/**"
       - "third_party/gpus/**"
@@ -33,7 +33,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/jax/0.10.0-das' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   xla:
@@ -139,7 +139,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ vars.HCU_JAX_DAS_REPO || 'HYGON-AI/jax-das' }}
-          ref: ${{ vars.HCU_JAX_DAS_REF || 'v0.10.0-das' }}
+          ref: ${{ vars.HCU_JAX_DAS_REF || 'main' }}
           token: ${{ secrets.JAX_DAS_READ_TOKEN }}
           path: jax-das
           persist-credentials: false
