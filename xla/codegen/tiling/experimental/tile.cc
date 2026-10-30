@@ -57,12 +57,12 @@ absl::StatusOr<SmallVector<int64_t>> ConvertSymbolicExprsToInts(
   SmallVector<int64_t> result;
   result.reserve(symbolic_exprs.size());
   for (const auto& symbolic_expr : symbolic_exprs) {
-    if (symbolic_expr.GetType() == SymbolicExprType::kConstant) {
-      result.push_back(symbolic_expr.GetValue());
-    } else {
+    SymbolicExpr canonical_expr = symbolic_expr.Canonicalize();
+    if (canonical_expr.GetType() != SymbolicExprType::kConstant) {
       return absl::InvalidArgumentError(absl::StrCat(
-          "Symbolic expression is not a constant: ", symbolic_expr));
+          "Symbolic expression is not a constant: ", canonical_expr));
     }
+    result.push_back(canonical_expr.GetValue());
   }
   return result;
 }
@@ -143,12 +143,17 @@ std::string Tile::ToString(bool print_variables) const {
   ss << "] upper bounds [";
   llvm::interleaveComma(upper_bounds(), ss, print_expr);
   ss << ']';
-  return s;
+  if (replica_id_.has_value()) {
+    ss << " replica_id [";
+    ss << replica_id_->ToString(tid_names, symbol_names);
+    ss << ']';
+  }
+  return ss.str();
 }
 
 SmallVector<SymbolicExpr> Tile::offsets() const {
   SmallVector<SymbolicExpr> offsets;
-  offsets.reserve(offsets.size());
+  offsets.reserve(dim_tiles_.size());
   for (const DimTile& dim_tile : dim_tiles_) {
     offsets.push_back(dim_tile.offset);
   }
@@ -157,7 +162,7 @@ SmallVector<SymbolicExpr> Tile::offsets() const {
 
 SmallVector<SymbolicExpr> Tile::sizes() const {
   SmallVector<SymbolicExpr> sizes;
-  sizes.reserve(sizes.size());
+  sizes.reserve(dim_tiles_.size());
   for (const DimTile& dim_tile : dim_tiles_) {
     sizes.push_back(dim_tile.size);
   }
@@ -166,7 +171,7 @@ SmallVector<SymbolicExpr> Tile::sizes() const {
 
 SmallVector<SymbolicExpr> Tile::strides() const {
   SmallVector<SymbolicExpr> strides;
-  strides.reserve(strides.size());
+  strides.reserve(dim_tiles_.size());
   for (const DimTile& dim_tile : dim_tiles_) {
     strides.push_back(dim_tile.stride);
   }
@@ -175,7 +180,7 @@ SmallVector<SymbolicExpr> Tile::strides() const {
 
 SmallVector<SymbolicExpr> Tile::upper_bounds() const {
   SmallVector<SymbolicExpr> upper_bounds;
-  upper_bounds.reserve(upper_bounds.size());
+  upper_bounds.reserve(dim_tiles_.size());
   for (const DimTile& dim_tile : dim_tiles_) {
     upper_bounds.push_back(dim_tile.upper_bound);
   }
@@ -197,10 +202,21 @@ void Tile::Replace(const llvm::DenseMap<SymbolicExpr, SymbolicExpr>& map) {
     dim_tile.stride = dim_tile.stride.Replace(map);
     dim_tile.upper_bound = dim_tile.upper_bound.Replace(map);
   }
+  if (replica_id_.has_value()) {
+    replica_id_ = replica_id_->Replace(map);
+  }
+}
+
+Tile Tile::CloneWithNewDims(llvm::SmallVector<DimTile> new_dim_tiles) const {
+  Tile ret{*tiling_space_, std::move(new_dim_tiles)};
+  ret.set_replica_id(replica_id_);
+  return ret;
 }
 
 bool Tile::operator==(const Tile& other) const {
-  return tiling_space_ == other.tiling_space_ && dim_tiles_ == other.dim_tiles_;
+  return tiling_space_ == other.tiling_space_ &&  //
+         dim_tiles_ == other.dim_tiles_ &&        //
+         replica_id_ == other.replica_id_;
 }
 
 }  // namespace xla::gpu::experimental

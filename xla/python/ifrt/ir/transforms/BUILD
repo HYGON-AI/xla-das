@@ -49,17 +49,13 @@ cc_library(
         "ifrt_verify_device_type_consistency_pass.cc",
         "ifrt_verify_donation_pass.cc",
         "ifrt_verify_sharding_specified_pass.cc",
-        "multi_threaded_atom_program_compiler.cc",
         "passes.cc",
-        "spmd_expandable_interface_verification_pass.cc",
-        "spmd_expansion_pass.cc",
         "vifrt_legalize_to_ifrt_pass.cc",
         "vifrt_to_version_pass.cc",
         # go/keep-sorted end
     ],
     hdrs = [
         "map_ifrt_to_vifrt.h",
-        "multi_threaded_atom_program_compiler.h",
         "passes.h",
     ],
     compatible_with = get_compatible_with_portable(),
@@ -67,7 +63,6 @@ cc_library(
         ":debug",
         ":passes_inc_gen",
         ":utils",
-        "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",
@@ -89,7 +84,6 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "//xla/service/spmd/shardy:constants",
         "//xla/service/spmd/shardy:utils",
-        "//xla/tsl/concurrency:future",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
@@ -105,7 +99,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/types:span",
         "@com_google_protobuf//:protobuf_lite",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AllPassesAndDialects",
@@ -127,18 +120,6 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:random",
-    ],
-)
-
-cc_library(
-    name = "built_in_spmd_expansions",
-    srcs = ["built_in_spmd_expansions.cc"],
-    hdrs = ["built_in_spmd_expansions.h"],
-    compatible_with = get_compatible_with_portable(),
-    deps = [
-        "//xla/python/ifrt/ir/transforms/spmd_expanders:spmd_expander",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
     ],
 )
 

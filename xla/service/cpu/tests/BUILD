@@ -342,6 +342,23 @@ xla_test(
     ],
 )
 
+xla_test(
+    name = "cpu_profiling_test",
+    srcs = ["cpu_profiling_test.cc"],
+    backends = ["cpu"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
 onednn_cc_test(
     name = "onednn_matmul_test",
     srcs = ["onednn_matmul_test.cc"],
@@ -412,7 +429,7 @@ onednn_cc_test(
     ],
 )
 
-xla_cc_test(
+onednn_cc_test(
     name = "onednn_layer_norm_test",
     srcs = ["onednn_layer_norm_test.cc"],
     copts = tsl_copts(),
@@ -432,7 +449,7 @@ xla_cc_test(
     ],
 )
 
-xla_cc_test(
+onednn_cc_test(
     name = "onednn_softmax_test",
     srcs = ["onednn_softmax_test.cc"],
     copts = tsl_copts(),
@@ -505,5 +522,23 @@ xla_cc_test(
         "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
+    ],
+)
+
+xla_test(
+    name = "cpu_tensordot_oom_test",
+    srcs = ["cpu_tensordot_oom_test.cc"],
+    backends = ["cpu"],
+    # TODO(b/504628271): Re-enable once OOM is fixed.
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:status_matchers",
+        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
     ],
 )

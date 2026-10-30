@@ -339,16 +339,22 @@ bool XEventsComparator::operator()(const XEvent* a, const XEvent* b) const {
   return XEventTimespan(*a) < XEventTimespan(*b);
 }
 
+void SortXLine(XLine* line) {
+  auto& events = *line->mutable_events();
+  std::stable_sort(events.pointer_begin(), events.pointer_end(),
+                   XEventsComparator());
+}
+
 void SortXPlane(XPlane* plane) {
   for (XLine& line : *plane->mutable_lines()) {
-    auto& events = *line.mutable_events();
-    std::sort(events.pointer_begin(), events.pointer_end(),
-              XEventsComparator());
+    SortXLine(&line);
   }
 }
 
 void SortXSpace(XSpace* space) {
-  for (XPlane& plane : *space->mutable_planes()) SortXPlane(&plane);
+  for (XPlane& plane : *space->mutable_planes()) {
+    SortXPlane(&plane);
+  }
 }
 
 // Normalize the line's timestamp in this XPlane.
@@ -731,14 +737,17 @@ bool IsCustomPlane(const XPlane& plane) {
 }
 
 bool IsHostPlane(const XPlane& plane) {
-  return plane.name() == kHostThreadsPlaneName ||
-         plane.name() == kHostCpusPlaneName ||
-         plane.name() == kTFStreamzPlaneName ||
-         plane.name() == kMetadataPlaneName ||
-         plane.name() == kSyscallsPlaneName ||
-         plane.name() == kPythonTracerPlaneName ||
-         plane.name() == kCuptiDriverApiPlaneName ||
-         plane.name() == kScopeRangeIdTreePlaneName;
+  static const absl::string_view kHostPlanePrefixes[] = {
+      kHostThreadsPlaneName,    kHostCpusPlaneName,
+      kTFStreamzPlaneName,      kMetadataPlaneName,
+      kSyscallsPlaneName,       kPythonTracerPlaneName,
+      kCuptiDriverApiPlaneName, kScopeRangeIdTreePlaneName};
+  for (absl::string_view prefix : kHostPlanePrefixes) {
+    if (absl::StartsWith(plane.name(), prefix)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool IsDevicePlane(const XPlane& plane) {

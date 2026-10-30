@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/core/collectives/communicator.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -55,7 +55,7 @@ static absl::Status Memcpy(const Communicator::Executor& executor,
     return absl::OkStatus();
   }
   auto* stream =
-      tsl::down_cast<const GpuCollectives::Executor&>(executor).stream();
+      absl::down_cast<const GpuCollectives::Executor&>(executor).stream();
   return stream->MemcpyD2D(&dst, src, size);
 }
 
@@ -248,7 +248,7 @@ absl::Status LoopbackCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
                                 rank_, peer.value(), count);
   size_t size = ByteSize(dtype, count);
   auto* stream =
-      tsl::down_cast<const GpuCollectives::Executor&>(executor).stream();
+      absl::down_cast<const GpuCollectives::Executor&>(executor).stream();
   return stream->MemZero(&recv_buffer, size);
 }
 

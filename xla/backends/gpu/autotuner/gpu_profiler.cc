@@ -21,12 +21,14 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/casts.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/backends/autotuner/profiler.h"
@@ -41,6 +43,7 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/maybe_owning_device_address.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
@@ -152,7 +155,7 @@ static absl::Status InitializeBuffersIfRequiredByOpcode(
     const Shape& group_sizes_shape =
         instr->operand(instr->operand_count() - 1)->shape();
     int64_t groups_per_batch =
-        group_sizes_shape.dimensions(group_sizes_shape.dimensions_size() - 1);
+        group_sizes_shape.dimensions(group_sizes_shape.dimensions().size() - 1);
     int64_t total_elements = ShapeUtil::ElementsIn(group_sizes_shape);
 
     // Calculate group sizes based on groups_per_batch (not total elements)
@@ -261,7 +264,7 @@ absl::StatusOr<std::unique_ptr<InputBuffers>> GpuProfiler::CreateInputBuffers(
 absl::StatusOr<ProfileResult> GpuProfiler::Profile(
     Executable* executable, const InputBuffers& buffers) {
   const GpuInputBuffers& gpu_buffers =
-      tsl::down_cast<const GpuInputBuffers&>(buffers);
+      absl::down_cast<const GpuInputBuffers&>(buffers);
   const RedzoneBuffers& rz_buffers = gpu_buffers.redzone_buffers;
   ProfileResult result;
   result.scratch_bytes = GetScratchBytes(executable);
@@ -314,8 +317,9 @@ absl::Status GpuProfiler::CheckInputBuffers(InputBuffers& buffers) {
   if (options_.redzone_padding_bytes == 0) {
     return absl::OkStatus();
   }
+  absl::ReaderMutexLock gpu_lock(GetGpuMutex(stream_executor_));
   const GpuInputBuffers& gpu_buffers =
-      tsl::down_cast<const GpuInputBuffers&>(buffers);
+      absl::down_cast<const GpuInputBuffers&>(buffers);
   const RedzoneBuffers& rz_buffers = gpu_buffers.redzone_buffers;
   TF_ASSIGN_OR_RETURN(se::RedzoneAllocator::RedzoneCheckStatus rz_check_status,
                       rz_buffers.RedzoneAllocator().CheckRedzones());
@@ -329,6 +333,7 @@ absl::Status GpuProfiler::CheckInputBuffers(InputBuffers& buffers) {
 absl::Status GpuProfiler::CheckOutputBuffer(ScopedShapedBuffer& output,
                                             ScopedShapedBuffer& reference,
                                             float rtol) {
+  absl::ReaderMutexLock gpu_lock(GetGpuMutex(stream_executor_));
   return ShapeUtil::ForEachLeafShapeWithStatus(
       reference.on_device_shape(),
       [&](const Shape& subshape, const ShapeIndex& index) -> absl::Status {
