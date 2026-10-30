@@ -2,14 +2,14 @@
 
 > [!IMPORTANT]
 > **xla-das** 是面向 DAS 架构的 xla 下游适配发行版，
-> 基于 [ROCm/xla](https://github.com/ROCm/xla) 的 `76282465a00b54ddcef59a2ee95412cd5ecf5551` 基线构建并集成 DAS 支持。
+> 基于 [ROCm/xla](https://github.com/ROCm/xla) 的 `d5734fef24ced94d13d7f28a5d41868e78415ffa` 基线构建并集成 DAS 支持。
 > 
 > 本项目不是 xla 官方发行版，而是基于 [ROCm/xla](https://github.com/ROCm/xla) 二次开发；ROCm xla 源自 [openxla/xla](https://github.com/openxla/xla) 二次开发。
 
 - **目标架构：** xla
-- **上游分支：** rocm-jaxlib-v0.10.0
-- **上游版本：** 76282465a00b54ddcef59a2ee95412cd5ecf5551
-- **上游基线：** `https://github.com/ROCm/xla/tree/76282465a00b54ddcef59a2ee95412cd5ecf5551`
+- **上游分支：** rocm-jaxlib-v0.10.1
+- **上游版本：** rocm-jaxlib-v0.10.1
+- **上游基线：** `https://github.com/ROCm/xla/tree/d5734fef24ced94d13d7f28a5d41868e78415ffa`
 - **上游许可：** Apache-2.0
 - **源码编译：** [BUILDING.md](docs/das/BUILDING.md)
 - **已知问题：** [BUILDING.md 中的已知问题](docs/das/BUILDING.md#已知问题)
