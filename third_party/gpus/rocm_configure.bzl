@@ -590,7 +590,27 @@ def _setup_rocm_distro_dir(repository_ctx):
         rocm_path = repository_ctx.os.environ.get(_ROCM_TOOLKIT_PATH, _DEFAULT_ROCM_TOOLKIT_PATH)
         repository_ctx.report_progress("Using local rocm installation {}".format(rocm_path))  # buildifier: disable=print
         repository_ctx.symlink(rocm_path, _DISTRIBUTION_PATH)
+        _link_runtime_rocm_smi(repository_ctx, rocm_path)
         return _get_rocm_config(repository_ctx, bash_bin, _DISTRIBUTION_PATH, _DEFAULT_ROCM_TOOLKIT_PATH)
+
+_HYHAL_PATH = "HYHAL_PATH"
+_DEFAULT_HYHAL_PATH = "/opt/hyhal"
+
+def _link_runtime_rocm_smi(repository_ctx, rocm_path):
+    hyhal_path = repository_ctx.os.environ.get(_HYHAL_PATH, _DEFAULT_HYHAL_PATH)
+    if repository_ctx.path(hyhal_path + "/lib/cmake/rocm_smi").exists:
+        source_root = hyhal_path
+    else:
+        source_root = rocm_path + "/.hyhal/rocm_smi"
+    for relative in [
+        "lib/librocm_smi64.so",
+        "include/rocm_smi",
+    ]:
+        source = source_root + "/" + relative
+        target = _DISTRIBUTION_PATH + "/" + relative
+        if repository_ctx.path(source).exists and not repository_ctx.path(target).exists:
+            repository_ctx.symlink(source, target)
+
 
 def _create_local_rocm_repository(repository_ctx):
     """Creates the repository containing files set up to build with ROCm."""
@@ -837,6 +857,7 @@ def _rocm_autoconf_impl(repository_ctx):
         _create_local_rocm_repository(repository_ctx)
 
 _ENVIRONS = [
+    _HYHAL_PATH,
     "TF_NEED_ROCM",
     "TF_ROCM_CLANG",
     "TF_NEED_CUDA",  # Needed by the `if_gpu_is_configured` macro

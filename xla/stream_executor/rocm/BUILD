@@ -1,4 +1,7 @@
-"""ROCm-platform specific StreamExecutor support code."""
+"""
+ROCm-platform specific StreamExecutor support code.
+Modified by Hygon Information Technology Co., Ltd., 2026.
+"""
 
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
@@ -320,7 +323,8 @@ cc_library(
 # rsmi_ symbols, so loading both lets the dynamic loader interpose ABI
 # incompatible definitions.
 # See RCCL change: https://github.com/ROCm/rocm-systems/commit/244047310e
-_USE_AMD_SMI = rocm_version_number() >= 71300
+# DTK not support librocm_smi64 now
+_USE_AMD_SMI = False
 
 alias(
     name = "smi",
