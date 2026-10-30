@@ -221,7 +221,6 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
     pm->addPass(mlir::createTritonAMDGPUBlockPingpong({num_stages}));
   }
 
-
   pm->addNestedPass<mlir::triton::FuncOp>(
       mlir::createTritonAMDGPUCanonicalizePointers());
   pm->addPass(mlir::createCanonicalizerPass());
@@ -260,8 +259,9 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
 // @triton//:third_party/amd/backend/compiler.py
 static void MakeLLIR(mlir::OpPassManager* pm,
                      const stream_executor::RocmComputeCapability& rocm_cc,
-                     int num_stages,
-                     const TritonHcuTuning& hcu_tuning) {
+                     int num_stages, const TritonHcuTuning& hcu_tuning) {
+  // Consumed by the HCU warp-spec lowering once that pass is linked in.
+  (void)hcu_tuning;
   pm->addPass(
       mlir::createTritonAMDGPUUpdateAsyncWaitCount({rocm_cc.gfx_version()}));
   pm->addPass(

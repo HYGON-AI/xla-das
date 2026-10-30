@@ -4339,6 +4339,7 @@ class RocmFusedConvRunner : public dnn::FusedConvRunner {
     CHECK(output_profile_result == nullptr);
 
     miopenStatus_t status;
+
 // HCU not support miopenExecuteFusionPlan_v2 now
 #if (TF_ROCM_VERSION >= 70000) && defined(MIOPEN_VERSION_MAJOR) && (MIOPEN_VERSION_MAJOR >= 3)
     status = miopenExecuteFusionPlan_v2(
