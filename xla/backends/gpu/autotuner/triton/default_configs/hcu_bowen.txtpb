@@ -8,44 +8,44 @@
 #
 # NOT autotuned, same caveat as hcu.txtpb: these are seeds with explicit
 # num_stages variants so the autotuner can reach the MLS stream pipeline.
-config { block_m: 32 block_n: 32 block_k: 256 split_k: 1 num_stages: 1 num_warps: 4 num_ctas: 1 }
-config { block_m: 64 block_n: 32 block_k: 32 split_k: 16 num_stages: 1 num_warps: 4 num_ctas: 1 }
-config { block_m: 32 block_n: 64 block_k: 64 split_k: 4 num_stages: 1 num_warps: 4 num_ctas: 1 }
-config { block_m: 128 block_n: 128 block_k: 64 split_k: 4 num_stages: 1 num_warps: 4 num_ctas: 1 }
-config { block_m: 16 block_n: 16 block_k: 256 split_k: 1 num_stages: 1 num_warps: 4 num_ctas: 1 }
-config { block_m: 16 block_n: 128 block_k: 32 split_k: 16 num_stages: 1 num_warps: 4 num_ctas: 1 }
-config { block_m: 64 block_n: 64 block_k: 128 split_k: 1 num_stages: 2 num_warps: 8 num_ctas: 1 }
-config { block_m: 64 block_n: 64 block_k: 128 split_k: 1 num_stages: 3 num_warps: 8 num_ctas: 1 }
-config { block_m: 128 block_n: 128 block_k: 128 split_k: 1 num_stages: 2 num_warps: 8 num_ctas: 1 }
-config { block_m: 128 block_n: 128 block_k: 128 split_k: 1 num_stages: 3 num_warps: 8 num_ctas: 1 }
-config { block_m: 128 block_n: 128 block_k: 128 split_k: 1 num_stages: 4 num_warps: 8 num_ctas: 1 }
-config { block_m: 128 block_n: 256 block_k: 64 split_k: 1 num_stages: 2 num_warps: 8 num_ctas: 1 }
-config { block_m: 128 block_n: 256 block_k: 64 split_k: 1 num_stages: 3 num_warps: 8 num_ctas: 1 }
-config { block_m: 256 block_n: 128 block_k: 64 split_k: 1 num_stages: 2 num_warps: 8 num_ctas: 1 }
-config { block_m: 256 block_n: 128 block_k: 64 split_k: 1 num_stages: 3 num_warps: 8 num_ctas: 1 }
-config { block_m: 64 block_n: 256 block_k: 64 split_k: 1 num_stages: 2 num_warps: 8 num_ctas: 1 }
-config { block_m: 256 block_n: 256 block_k: 32 split_k: 1 num_stages: 2 num_warps: 8 num_ctas: 1 }
-config { block_m: 128 block_n: 64 block_k: 128 split_k: 1 num_stages: 3 num_warps: 4 num_ctas: 1 }
+config { block_m: 32 block_n: 32 block_k: 256 num_stages: 1 num_warps: 4 num_ctas: 1 }
+config { block_m: 64 block_n: 32 block_k: 32 num_stages: 1 num_warps: 4 num_ctas: 1 }
+config { block_m: 32 block_n: 64 block_k: 64 num_stages: 1 num_warps: 4 num_ctas: 1 }
+config { block_m: 128 block_n: 128 block_k: 64 num_stages: 1 num_warps: 4 num_ctas: 1 }
+config { block_m: 16 block_n: 16 block_k: 256 num_stages: 1 num_warps: 4 num_ctas: 1 }
+config { block_m: 16 block_n: 128 block_k: 32 num_stages: 1 num_warps: 4 num_ctas: 1 }
+config { block_m: 64 block_n: 64 block_k: 128 num_stages: 2 num_warps: 8 num_ctas: 1 }
+config { block_m: 64 block_n: 64 block_k: 128 num_stages: 3 num_warps: 8 num_ctas: 1 }
+config { block_m: 128 block_n: 128 block_k: 128 num_stages: 2 num_warps: 8 num_ctas: 1 }
+config { block_m: 128 block_n: 128 block_k: 128 num_stages: 3 num_warps: 8 num_ctas: 1 }
+config { block_m: 128 block_n: 128 block_k: 128 num_stages: 4 num_warps: 8 num_ctas: 1 }
+config { block_m: 128 block_n: 256 block_k: 64 num_stages: 2 num_warps: 8 num_ctas: 1 }
+config { block_m: 128 block_n: 256 block_k: 64 num_stages: 3 num_warps: 8 num_ctas: 1 }
+config { block_m: 256 block_n: 128 block_k: 64 num_stages: 2 num_warps: 8 num_ctas: 1 }
+config { block_m: 256 block_n: 128 block_k: 64 num_stages: 3 num_warps: 8 num_ctas: 1 }
+config { block_m: 64 block_n: 256 block_k: 64 num_stages: 2 num_warps: 8 num_ctas: 1 }
+config { block_m: 256 block_n: 256 block_k: 32 num_stages: 2 num_warps: 8 num_ctas: 1 }
+config { block_m: 128 block_n: 64 block_k: 128 num_stages: 3 num_warps: 4 num_ctas: 1 }
 
 # num_stages / num_warps / waves_per_eu variants of the tiles above. The table
 # is the autotuner's candidate filter, and the full search space beats it on
 # some shapes (512x8192x8192: ns=2, nw=4, waves_per_eu=2 was 11% faster than
 # the best table entry). Without these the variants are pruned before the
 # benchmark.
-config { block_m: 128 block_n: 128 block_k: 64 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 }
-config { block_m: 128 block_n: 128 block_k: 64 split_k: 1 num_stages: 3 num_warps: 4 num_ctas: 1 }
-config { block_m: 128 block_n: 128 block_k: 64 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 waves_per_eu: 2 }
-config { block_m: 128 block_n: 128 block_k: 64 split_k: 1 num_stages: 1 num_warps: 4 num_ctas: 1 waves_per_eu: 2 }
-config { block_m: 128 block_n: 128 block_k: 64 split_k: 1 num_stages: 2 num_warps: 8 num_ctas: 1 waves_per_eu: 2 }
-config { block_m: 128 block_n: 256 block_k: 64 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 }
-config { block_m: 128 block_n: 256 block_k: 64 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 waves_per_eu: 2 }
-config { block_m: 256 block_n: 128 block_k: 64 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 }
-config { block_m: 256 block_n: 128 block_k: 64 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 waves_per_eu: 2 }
-config { block_m: 64 block_n: 64 block_k: 128 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 }
-config { block_m: 64 block_n: 64 block_k: 128 split_k: 1 num_stages: 2 num_warps: 8 num_ctas: 1 waves_per_eu: 2 }
-config { block_m: 128 block_n: 128 block_k: 128 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 }
-config { block_m: 128 block_n: 128 block_k: 128 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 waves_per_eu: 2 }
-config { block_m: 64 block_n: 128 block_k: 64 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 }
-config { block_m: 64 block_n: 128 block_k: 64 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 waves_per_eu: 2 }
-config { block_m: 128 block_n: 64 block_k: 64 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 }
-config { block_m: 128 block_n: 64 block_k: 64 split_k: 1 num_stages: 2 num_warps: 4 num_ctas: 1 waves_per_eu: 2 }
+config { block_m: 128 block_n: 128 block_k: 64 num_stages: 2 num_warps: 4 num_ctas: 1 }
+config { block_m: 128 block_n: 128 block_k: 64 num_stages: 3 num_warps: 4 num_ctas: 1 }
+config { block_m: 128 block_n: 128 block_k: 64 num_stages: 2 num_warps: 4 num_ctas: 1 waves_per_eu: 2 }
+config { block_m: 128 block_n: 128 block_k: 64 num_stages: 1 num_warps: 4 num_ctas: 1 waves_per_eu: 2 }
+config { block_m: 128 block_n: 128 block_k: 64 num_stages: 2 num_warps: 8 num_ctas: 1 waves_per_eu: 2 }
+config { block_m: 128 block_n: 256 block_k: 64 num_stages: 2 num_warps: 4 num_ctas: 1 }
+config { block_m: 128 block_n: 256 block_k: 64 num_stages: 2 num_warps: 4 num_ctas: 1 waves_per_eu: 2 }
+config { block_m: 256 block_n: 128 block_k: 64 num_stages: 2 num_warps: 4 num_ctas: 1 }
+config { block_m: 256 block_n: 128 block_k: 64 num_stages: 2 num_warps: 4 num_ctas: 1 waves_per_eu: 2 }
+config { block_m: 64 block_n: 64 block_k: 128 num_stages: 2 num_warps: 4 num_ctas: 1 }
+config { block_m: 64 block_n: 64 block_k: 128 num_stages: 2 num_warps: 8 num_ctas: 1 waves_per_eu: 2 }
+config { block_m: 128 block_n: 128 block_k: 128 num_stages: 2 num_warps: 4 num_ctas: 1 }
+config { block_m: 128 block_n: 128 block_k: 128 num_stages: 2 num_warps: 4 num_ctas: 1 waves_per_eu: 2 }
+config { block_m: 64 block_n: 128 block_k: 64 num_stages: 2 num_warps: 4 num_ctas: 1 }
+config { block_m: 64 block_n: 128 block_k: 64 num_stages: 2 num_warps: 4 num_ctas: 1 waves_per_eu: 2 }
+config { block_m: 128 block_n: 64 block_k: 64 num_stages: 2 num_warps: 4 num_ctas: 1 }
+config { block_m: 128 block_n: 64 block_k: 64 num_stages: 2 num_warps: 4 num_ctas: 1 waves_per_eu: 2 }
