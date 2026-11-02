@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/utils/hlo_traversal.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
@@ -146,6 +147,46 @@ ENTRY entry_computation {
 
   EXPECT_THAT(tiling.TileSizesForInstruction(dot),
               IsOkAndHolds(ElementsAre(32, 16, 16)));
+}
+
+TEST_F(TilingFromBlockParametersTest, GeneratesTilingForDotWithTilingOverride) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"hlo(
+HloModule m
+
+fused_computation {
+  p0 = f32[128,128] parameter(0)
+  p1 = f32[128,128] parameter(1)
+  ROOT dot = f32[128,128] dot(p0, p1),
+   lhs_contracting_dims={1}, rhs_contracting_dims={0}}
+
+ENTRY entry_computation {
+  param_0 = f32[128,128] parameter(0)
+  param_1 = f32[128,128] parameter(1)
+  ROOT fusion = f32[128,128] fusion(param_0, param_1), kind=kCustom, calls=fused_computation
+}
+)hlo"));
+
+  std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
+  ASSERT_TRUE(analysis.has_value());
+
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {{16, 16}};
+
+  Tile tile_override;
+  tile_override.add_sizes(64);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      Tiling tiling, TilingFromAnnotatedFusion(
+                         *analysis, block_level_parameters, &tile_override));
+
+  const HloInstruction* dot = module->entry_computation()
+                                  ->root_instruction()
+                                  ->fused_instructions_computation()
+                                  ->root_instruction();
+
+  EXPECT_THAT(tiling.TileSizesForInstruction(dot),
+              IsOkAndHolds(ElementsAre(64, 16, 16)));
 }
 
 class GetTileTilingSpaceConcreteSizesTest

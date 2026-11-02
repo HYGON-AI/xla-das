@@ -80,7 +80,6 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/path.h"
 
-// TODO(b/446827313): update names of the tests.
 namespace xla {
 namespace gpu {
 namespace {
@@ -97,6 +96,16 @@ class TritonEmitterTest
     : public HloPjRtInterpreterReferenceMixin<GpuPjRtCodegenTest>,
       public XTileTestBase {
  public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    // TODO: b/509502550 - remove the flag and disable tests that use
+    // multi-output fusions when removing the feature.
+    DebugOptions debug_options = HloPjRtInterpreterReferenceMixin<
+        GpuPjRtCodegenTest>::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_unsupported_enable_triton_multi_output_fusion(
+        true);
+    return debug_options;
+  }
+
   const stream_executor::GpuComputeCapability& GpuComputeCapability() {
     return device_description().gpu_compute_capability();
   }
@@ -572,14 +581,14 @@ ENTRY entry {
   const HloFusionInstruction* triton_fusion = Cast<HloFusionInstruction>(
       hlo_module->entry_computation()->root_instruction());
   const se::DeviceDescription dev_info =
-      TestGpuDeviceInfo::RTXA6000DeviceInfo();
+      TestGpuDeviceInfo::RTXA6000DeviceInfo(se::CudaComputeCapability(7, 0));
   llvm::LLVMContext llvm_ctx;
   mlir::MLIRContext mlir_context;
   llvm::Triple target_triple(nvptx::TargetTriple());
   std::string data_layout(nvptx::DataLayout());
 
   EXPECT_THAT(
-      TritonWrapper("test_fn", triton_fusion,
+      TritonWrapper("test_fn", *triton_fusion,
                     se::CudaComputeCapability{se::CudaComputeCapability::kVolta,
                                               /*minor=*/0},
                     dev_info, BlockLevelParameters(), target_triple,
@@ -646,7 +655,7 @@ ENTRY entry_computation {
   // will be 1024 * 65536 = 67108864 elements, that is larger than the limit of
   // 1048576.
   EXPECT_THAT(
-      TritonWrapper("test_fn", triton_fusion, compute_capability, dev_info,
+      TritonWrapper("test_fn", *triton_fusion, compute_capability, dev_info,
                     block_level_parameters, target_triple, data_layout,
                     llvm_ctx, mlir_context),
       absl_testing::StatusIs(
@@ -2036,7 +2045,7 @@ TEST_F(TritonEmitterTest, RocmWarpSizeIsSetCorrectly) {
   // https://github.com/openxla/xla/blob/c8b710f1b70f890c9ee4b8756bc53f3a599a0ed5/xla/backends/gpu/codegen/triton/fusion_emitter.cc#L1863-L1867
   dev_info.set_shared_memory_per_block_optin(64 * 1024);
   TF_ASSERT_OK(TritonWrapper(
-      "test_fn", triton_fusion,
+      "test_fn", *triton_fusion,
       se::GpuComputeCapability{se::RocmComputeCapability("gfx942")}, dev_info,
       block_level_parameters, target_triple, data_layout, llvm_ctx,
       mlir_context));
@@ -2057,7 +2066,7 @@ TEST_F(TritonEmitterTest, RocmWarpSizeIsSetCorrectly) {
   // https://github.com/openxla/xla/blob/c8b710f1b70f890c9ee4b8756bc53f3a599a0ed5/xla/backends/gpu/codegen/triton/fusion_emitter.cc#L1863-L1867
   dev_info_n.set_shared_memory_per_block_optin(64 * 1024);
   TF_ASSERT_OK(TritonWrapper(
-      "test_fn", triton_fusion,
+      "test_fn", *triton_fusion,
       se::GpuComputeCapability{se::RocmComputeCapability("gfx1100")},
       dev_info_n, block_level_parameters, target_triple, data_layout, llvm_ctx,
       mlir_context));
@@ -2099,7 +2108,7 @@ TEST_F(TritonEmitterTest, RocmWavesPerEuAttributeIsSet) {
   TF_ASSERT_OK_AND_ASSIGN(
       TritonWrapperResult result,
       TritonWrapper(
-          "test_fn", triton_fusion,
+          "test_fn", *triton_fusion,
           se::GpuComputeCapability{se::RocmComputeCapability("gfx90a")},
           dev_info, block_level_parameters, target_triple, data_layout,
           llvm_ctx, mlir_context));
@@ -2140,7 +2149,7 @@ TEST_F(TritonEmitterTest, RocmWavesPerEuZeroOmitsAttribute) {
   TF_ASSERT_OK_AND_ASSIGN(
       TritonWrapperResult result,
       TritonWrapper(
-          "test_fn", triton_fusion,
+          "test_fn", *triton_fusion,
           se::GpuComputeCapability{se::RocmComputeCapability("gfx90a")},
           dev_info, block_level_parameters, target_triple, data_layout,
           llvm_ctx, mlir_context));

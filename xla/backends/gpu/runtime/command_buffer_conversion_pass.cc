@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
@@ -59,7 +60,6 @@ limitations under the License.
 #include "tsl/platform/platform.h"
 #include "tsl/profiler/lib/profiler_lock.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -88,8 +88,9 @@ CommandBufferConfig GetCommandBufferConfig(
   static constexpr auto kRequireConditionals = {DebugOptions::CONDITIONAL,
                                                 DebugOptions::WHILE};
   static constexpr auto kRequireTracing = {
-      DebugOptions::CUBLAS, DebugOptions::CUBLASLT, DebugOptions::CUDNN,
-      DebugOptions::CUSTOM_CALL, DebugOptions::COLLECTIVES};
+      DebugOptions::CUBLAS,      DebugOptions::CUBLASLT,
+      DebugOptions::CUDNN,       DebugOptions::CUSTOM_CALL,
+      DebugOptions::COLLECTIVES, DebugOptions::CONVOLUTION};
 
   auto erase = [&](absl::Span<const DebugOptions::CommandBufferCmdType> cmds) {
     for (auto cmd : cmds) {
@@ -164,6 +165,8 @@ std::optional<DebugOptions::CommandBufferCmdType> GetCommandBufferCmdType(
       return DebugOptions::COLLECTIVES;
     case Thunk::kCuDnn:
       return DebugOptions::CUDNN;
+    case Thunk::kConvolution:
+      return DebugOptions::CONVOLUTION;
     case Thunk::kCustomCall:
       return DebugOptions::CUSTOM_CALL;
     case Thunk::kCublasLtMatmul:
@@ -204,8 +207,8 @@ bool IsConvertible(const ConditionalThunk& conditional_thunk,
 }
 
 // Returns true if the CustomCallThunk is convertible to a command buffer
-// operation. Checks if the custom call target is in the legacy allowlist or if
-// the registered FFI handler is compatible with command buffers.
+// operation. Checks if the registered FFI handler is compatible with command
+// buffers.
 bool IsConvertible(const CustomCallThunk& custom_call_thunk,
                    const CommandBufferConfig& config) {
   const std::string& target_name = custom_call_thunk.target_name();
@@ -307,7 +310,11 @@ bool IsConvertible(const Thunk& thunk, const CommandBufferConfig& config) {
   }
 
   if (thunk.kind() == Thunk::kCustomCall) {
-    return IsConvertible(static_cast<const CustomCallThunk&>(thunk), config);
+    if (auto* ffi_thunk = dynamic_cast<const CustomCallThunk*>(&thunk)) {
+      return IsConvertible(*ffi_thunk, config);
+    }
+    // Legacy custom calls are not command-buffer compatible.
+    return false;
   }
 
   if (thunk.kind() == Thunk::kDynamicSlice) {

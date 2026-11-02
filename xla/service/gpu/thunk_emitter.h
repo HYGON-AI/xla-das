@@ -93,10 +93,9 @@ class ThunkEmitter {
 
   AsyncThunkSequence EmitCallComputation(const HloInstruction* hlo);
 
-  absl::StatusOr<ThunkSequence> EmitAsyncComputation(const HloInstruction* hlo);
+  AsyncThunkSequence EmitAsyncComputation(const HloInstruction* instr);
 
-  absl::StatusOr<ThunkSequence> EmitAsyncCustomCallStart(
-      const HloInstruction* instr);
+  AsyncThunkSequence EmitAsyncCustomCallStart(const HloInstruction* instr);
 
   absl::StatusOr<ThunkSequence> EmitAsyncDone(const HloInstruction* hlo);
 
@@ -153,7 +152,7 @@ class ThunkEmitter {
       std::vector<CollectiveThunk::Buffer>& buffers,
       const HloInstruction* async_start, const HloInstType* inst);
 
-  absl::StatusOr<ThunkSequence> EmitFusion(const HloFusionInstruction* hlo);
+  AsyncThunkSequence EmitFusion(const HloFusionInstruction* instr);
 
   absl::StatusOr<ThunkSequence> EmitFftThunk(const HloFftInstruction* hlo);
 
@@ -194,8 +193,7 @@ class ThunkEmitter {
   AsyncThunkSequence EmitRngGetAndUpdateState(
       const HloRngGetAndUpdateStateInstruction* instr);
 
-  absl::StatusOr<ThunkSequence> EmitSliceToDynamic(
-      const HloCustomCallInstruction* hlo);
+  AsyncThunkSequence EmitSliceToDynamic(const HloCustomCallInstruction* instr);
 
   absl::StatusOr<ThunkSequence> EmitSendDoneThunk(
       const HloSendDoneInstruction* hlo);
@@ -212,7 +210,7 @@ class ThunkEmitter {
       const HloInstruction* hlo);
 
   absl::StatusOr<ThunkSequence> EmitTritonCustomCall(
-      const HloCustomCallInstruction* hlo);
+      const HloCustomCallInstruction* instr);
 
   AsyncThunkSequence EmitWhile(const HloInstruction* instr);
 

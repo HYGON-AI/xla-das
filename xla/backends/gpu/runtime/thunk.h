@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
@@ -60,7 +61,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -114,16 +114,15 @@ class Thunk {
     kConvolution,
     kConvolutionReorder,
     kCopy,
-    kCopyDone,
     kCuDnn,
     kCublasLtMatmul,
     kCustomCall,
     kCustomKernel,
     kDynamicSlice,
+    kDynamicSliceFusion,
     kFft,
     kGemm,
-    kGroupDone,
-    kGroupStart,
+    kGroup,
     kHostExecuteDone,
     kHostExecuteStart,
     kHostRecv,
@@ -462,7 +461,7 @@ class Thunk {
   }
 
   // Serializes the thunk into a `ThunkProto`.
-  virtual absl::StatusOr<ThunkProto> ToProto() const;
+  virtual absl::StatusOr<ThunkProto> ToProto() const = 0;
 
   // Serializes the metadata of the thunk into a `ThunkMetadataProto`.
   ThunkMetadataProto ToMetadataProto() const;

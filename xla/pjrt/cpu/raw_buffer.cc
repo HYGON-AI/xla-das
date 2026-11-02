@@ -22,6 +22,7 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -53,6 +54,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/errors.h"
@@ -137,6 +139,15 @@ absl::Status CpuRawBuffer::ValidateSlice(int64_t offset, int64_t slice_size) {
   return absl::OkStatus();
 }
 
+absl::StatusOr<PjRtRawBufferRef> CpuRawBuffer::Slice(int64_t offset,
+                                                     int64_t slice_size) {
+  TF_RETURN_IF_ERROR(ValidateSlice(offset, slice_size));
+  auto sliced_memory =
+      CpuDeviceMemory::CreateSlicedMemory(buffer_, offset, slice_size);
+  return tsl::MakeRef<CpuRawBuffer>(memory_space_, std::move(sliced_memory),
+                                    slice_size, is_mutable_);
+}
+
 absl::StatusOr<PjRtDeviceEventRef>
 CpuRawBuffer::CopyRawHostToDeviceAndReturnEvent(const void* src, int64_t offset,
                                                 int64_t transfer_size) {
@@ -159,12 +170,13 @@ absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyFromLiteral(
     const LiteralSlice& literal, const xla::Layout& layout,
     AsyncWorkRunner* async_work_runner) {
   auto event = tsl::MakeConstructedAsyncValueRef<CpuEvent>();
-  async_work_runner->Schedule([literal, layout, event, buffer = buffer_]() {
+  async_work_runner->Execute([literal, layout, event, buffer = buffer_]() {
     CHECK(buffer.IsConcrete());
     const xla::Shape& shape = literal.shape();
-    if ((!shape.has_layout() &&
-         !xla::LayoutUtil::IsMonotonicWithDim0Major(layout)) ||
-        (shape.layout() != layout)) {
+    if (shape.IsToken()) {
+    } else if ((!shape.has_layout() &&
+                !xla::LayoutUtil::IsMonotonicWithDim0Major(layout)) ||
+               shape.layout() != layout) {
       auto shape_copy = xla::ShapeUtil::MakeShape(
           literal.shape().element_type(), literal.shape().dimensions());
       shape_copy.mutable_layout()->mutable_minor_to_major()->assign(
@@ -191,7 +203,7 @@ absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyFromHostBuffer(
     AsyncWorkRunner* async_work_runner, tsl::thread::ThreadPool* thread_pool,
     int max_transpose_threads) {
   CommonPjRtClient* client =
-      tensorflow::down_cast<CommonPjRtClient*>(memory_space()->client());
+      absl::down_cast<CommonPjRtClient*>(memory_space()->client());
   tsl::AsyncValueRef<CpuDeviceMemory> device_buffer = buffer_;
   bool has_default_layout =
       !byte_strides || HasMajorToMinorLayout(type, dims, *byte_strides);
@@ -267,10 +279,10 @@ absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyFromHostBuffer(
       tsl::AsyncValueRef<CpuEvent> copy_event =
           tsl::MakeConstructedAsyncValueRef<CpuEvent>();
       auto result = PjRtDeviceEventRef(copy_event.CopyRef());
-      async_work_runner->Schedule([device_buffer, dst_data_ptr, data, byte_size,
-                                   copy_event = std::move(copy_event),
-                                   on_done_with_host_buffer = std::move(
-                                       on_done_with_host_buffer)]() mutable {
+      async_work_runner->Execute([device_buffer, dst_data_ptr, data, byte_size,
+                                  copy_event = std::move(copy_event),
+                                  on_done_with_host_buffer = std::move(
+                                      on_done_with_host_buffer)]() mutable {
         tsl::profiler::TraceMe traceme("H2D Dispatch");
         std::memcpy(dst_data_ptr, data, byte_size);
         if (on_done_with_host_buffer) {
@@ -284,27 +296,6 @@ absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyFromHostBuffer(
     }
   }
   return PjRtDeviceEventRef(tsl::MakeAvailableAsyncValueRef<CpuEvent>());
-}
-
-absl::StatusOr<xla::Shape> MakeDefaultCpuBufferShape(
-    xla::Shape shape, const xla::Layout* layout) {
-  if (layout) {
-    shape.mutable_layout()->mutable_minor_to_major()->assign(
-        layout->minor_to_major().begin(), layout->minor_to_major().end());
-  } else {
-    xla::LayoutUtil::SetToDefaultLayout(&shape);
-  }
-  auto element_type = shape.element_type();
-  if (primitive_util::IsSubByteNonPredType(element_type)) {
-    shape.mutable_layout()->set_element_size_in_bits(
-        primitive_util::BitWidth(element_type));
-  }
-  if (layout && *layout != shape.layout()) {
-    return absl::UnimplementedError(
-        absl::StrCat("PjRt CPU buffers only support default layout. ",
-                     shape.ToString(), " vs ", layout->ToString()));
-  }
-  return shape;
 }
 
 void CpuRawBuffer::ReadDynamicShape(tsl::AsyncValueRef<xla::Shape> output_shape,
@@ -341,7 +332,7 @@ void CpuRawBuffer::CopyToLiteralAsync(
     Promise<> promise, tsl::RCReference<PjRtDeviceEventPromise> device_promise,
     MutableLiteralBase* literal, xla::Shape shape) {
   CommonPjRtClient* client =
-      tensorflow::down_cast<CommonPjRtClient*>(memory_space()->client());
+      absl::down_cast<CommonPjRtClient*>(memory_space()->client());
   client->async_work_runner()->Execute(
       [client, buffer = buffer_, promise = std::move(promise),
        device_promise = std::move(device_promise), literal, shape]() mutable {
@@ -416,7 +407,7 @@ void CpuRawBuffer::CopyToLiteralAsync(
 }
 
 void CpuRawBuffer::CopyTo(
-    tsl::RCReference<CommonPjRtRawBuffer> dst_raw_buffer,
+    PjRtRawBufferRef dst_raw_buffer,
     tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
     tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
     ::tsl::AsyncValueRef<bool> allocation_event) {
@@ -437,6 +428,46 @@ void CpuRawBuffer::CopyTo(
             PjRtDeviceEventRef(tsl::MakeAvailableAsyncValueRef<CpuEvent>()));
       });
   definition_event_promise->Set(*std::move(other_event));
+}
+
+void CpuTrackedDeviceEventSet::AddEvent(PjRtDeviceEventRef event) {
+  if (event) {
+    events_.push_back(tsl::FormRef(event.async_value()));
+  }
+}
+
+void CpuTrackedDeviceEventSet::AddEvent(
+    tsl::RCReference<tsl::AsyncValue> event) {
+  events_.push_back(std::move(event));
+}
+
+void CpuTrackedDeviceEventSet::AppendTo(
+    std::vector<tsl::RCReference<tsl::AsyncValue>>& events) {
+  for (const auto& ev : events_) {
+    events.push_back(ev);
+  }
+}
+
+void CpuTrackedDeviceEventSet::AppendTo(
+    std::vector<PjRtDeviceEventRef>& events) {
+  events.reserve(events.size() + events_.size());
+  for (const auto& ev : events_) {
+    events.push_back(
+        PjRtDeviceEventRef(tsl::AsyncValueRef<tsl::AsyncValue>(ev)));
+  }
+}
+
+void CpuTrackedDeviceEventSet::AppendTo(PjRtDeviceEventSet& events) {
+  for (const auto& ev : events_) {
+    events.AddEvent(PjRtDeviceEventRef(tsl::AsyncValueRef<CpuEvent>(ev)));
+  }
+}
+
+absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyRawToRemoteDevice(
+    Future<std::string> serialized_descriptor, RemoteSendCallback on_done,
+    std::vector<PjRtDeviceEventRef> transfer_dependency_avs) {
+  return absl::UnimplementedError(
+      "CpuRawBuffer does not support CopyRawToRemoteDevice.");
 }
 
 }  // namespace xla

@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_phase_compile_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_profiler_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_shardings_extension.h"
+#include "xla/pjrt/c/pjrt_c_api_status_utils.h"
 #include "xla/pjrt/c/pjrt_c_api_stream_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_tpu_topology_extension.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_multi_slice_config.h"
@@ -72,8 +73,8 @@ limitations under the License.
 #include "xla/pjrt/extensions/executable_metadata/executable_metadata_extension.h"
 #include "xla/pjrt/extensions/host_allocator/host_allocator_extension.h"
 #include "xla/pjrt/extensions/host_allocator/host_allocator_interface_impl.h"
-#include "xla/pjrt/extensions/host_allocator/host_memory_allocator/host_memory_allocator_extension.h"
-#include "xla/pjrt/extensions/host_allocator/host_memory_allocator/host_memory_allocator_interface_impl.h"
+#include "xla/pjrt/extensions/host_memory_allocator/host_memory_allocator_extension.h"
+#include "xla/pjrt/extensions/host_memory_allocator/host_memory_allocator_interface_impl.h"
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/mlir_to_hlo.h"
@@ -115,6 +116,7 @@ limitations under the License.
 namespace xla {
 
 constexpr int kMaxDims = 4;
+const char PjRtCApiClient::kPjRtCApiMemorySpaceKey = 0;
 
 // Helper macros
 
@@ -258,6 +260,16 @@ void PjRtCApiClient::InitDevicesAndMemorySpaces() {
               std::make_unique<PjRtCApiMemorySpace>(memory, this));
       addressable_memory_spaces_.push_back(cpp_memory.get());
       c_to_cpp_memory_map_[memory] = cpp_memory.get();
+
+      if (SupportsMemoryUserData() && memory->vtable &&
+          memory->vtable->set_user_data) {
+        memory->vtable->set_user_data(memory,
+                                      &PjRtCApiClient::kPjRtCApiMemorySpaceKey,
+                                      cpp_memory.get(), [](void*) {});
+        memory->vtable->set_user_data(
+            memory, reinterpret_cast<void*>(&PjRtMemorySpace::FromC),
+            cpp_memory.get(), [](void*) {});
+      }
     }
   } else if (pjrt::GetErrorCode(client_error.get(), c_api_) !=
              PJRT_Error_Code_UNIMPLEMENTED) {
@@ -1554,8 +1566,10 @@ class PjRtCApiAsyncHostToDeviceTransferManager
     args.buffer_index = buffer_index;
 
     const xla::Shape& shape = literal.shape();
-    args.shape_dims = shape.dimensions().data();
-    args.shape_num_dims = shape.dimensions().size();
+    if (shape.IsArray()) {
+      args.shape_dims = shape.dimensions().data();
+      args.shape_num_dims = shape.dimensions().size();
+    }
     args.shape_element_type =
         pjrt::ConvertToPjRtBufferType(shape.element_type());
 
@@ -1568,7 +1582,11 @@ class PjRtCApiAsyncHostToDeviceTransferManager
       args.shape_layout = nullptr;
     }
 
-    args.data = literal.untyped_data();
+    if (shape.IsArray()) {
+      args.data = literal.untyped_data();
+    } else {
+      args.data = nullptr;
+    }
     const PJRT_Api* api = c_client_->pjrt_c_api();
     RETURN_STATUS_IF_PJRT_ERROR(
         api->PJRT_AsyncHostToDeviceTransferManager_TransferLiteral(&args), api);
@@ -2915,7 +2933,7 @@ PJRT_SendCallbackInfo CppSendCallbackToC(
       [&send_callback = cpp_send_callback.callback](
           PJRT_Chunk* chunk, PJRT_CallbackError* callback_error,
           size_t total_size_in_bytes, bool done) -> PJRT_Error* {
-    // PJRT C API doesn't support
+    // PJRT C API doesn't fully support
     // use_major_to_minor_data_layout_for_callbacks = false
     xla::Shape dummy_shape;
     absl::Status status = send_callback(xla::PjRtTransferMetadata{dummy_shape},
@@ -3025,7 +3043,7 @@ PJRT_RecvCallbackInfo CppRecvCallbackToC(
     PjRtCApiLoadedExecutable::RecvCallbackFunction* recv_callback_function) {
   *recv_callback_function = [&recv_callback = cpp_recv_callback.callback,
                              c_api](PJRT_CopyToDeviceStream* stream) {
-    // PJRT C API doesn't support
+    // PJRT C API doesn't fully support
     // use_major_to_minor_data_layout_for_callbacks = false
     xla::Shape dummy_shape;
     recv_callback(xla::PjRtTransferMetadata{dummy_shape},
@@ -3134,19 +3152,14 @@ PjRtCApiLoadedExecutable::GetCommonExecuteArgs(
     std::vector<int64_t>& incarnation_ids_storage) const {
   bool using_host_callbacks =
       !options.send_callbacks.empty() || !options.recv_callbacks.empty();
-  if (using_host_callbacks &&
-      !options.use_major_to_minor_data_layout_for_callbacks) {
-    return Unimplemented(
-        "PJRT C API doesn't support "
-        "ExecuteOptions::use_major_to_minor_data_layout_for_callbacks = false");
-  }
-
   PJRT_LoadedExecutable_Execute_Args args;
   args.struct_size = PJRT_LoadedExecutable_Execute_Args_STRUCT_SIZE;
   args.executable = c_loaded_executable();
   args.options = &c_options;
   args.options->struct_size = PJRT_ExecuteOptions_STRUCT_SIZE;
   args.options->launch_id = options.launch_id;
+  args.options->use_major_to_minor_data_layout_for_callbacks =
+      options.use_major_to_minor_data_layout_for_callbacks;
   args.options->multi_slice_config = nullptr;
   if (options.multi_slice_config != nullptr) {
     args.options->multi_slice_config =
@@ -3532,10 +3545,15 @@ std::shared_ptr<const PjRtLayout> PjRtCApiBuffer::layout() const {
 
 const Shape& PjRtCApiBuffer::on_device_shape() const {
   if (!on_device_shape_.has_value()) {
-    Shape shape(element_type(), dimensions(), is_dynamic_dimension());
-    *shape.mutable_layout() = layout()->xla_layout();
-    absl::MutexLock lock(mu_);
-    on_device_shape_ = shape;
+    if (element_type() == TOKEN) {
+      absl::MutexLock lock(mu_);
+      on_device_shape_ = ShapeUtil::MakeTokenShape();
+    } else {
+      Shape shape(element_type(), dimensions(), is_dynamic_dimension());
+      *shape.mutable_layout() = layout()->xla_layout();
+      absl::MutexLock lock(mu_);
+      on_device_shape_ = shape;
+    }
   }
   return *on_device_shape_;
 }

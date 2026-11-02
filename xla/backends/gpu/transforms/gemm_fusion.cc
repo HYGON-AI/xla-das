@@ -18,6 +18,7 @@ limitations under the License.
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <queue>
 #include <string>
@@ -35,8 +36,11 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/codegen/triton/support_legacy.h"
+#include "xla/codegen/tiling/symbolic_tile_analysis.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -44,17 +48,19 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/cublas_padding_requirements.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
 #include "xla/service/gpu/triton_tiling_propagation.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -108,7 +114,7 @@ class AdjacencyList {
 };
 
 struct HloAndIterSpec {
-  const HloInstruction* original_hlo;
+  HloInstruction* original_hlo;
   TensorIterationSpec iter_spec;
 
   auto ToTuple() const { return std::make_tuple(original_hlo, iter_spec); }
@@ -122,7 +128,7 @@ struct HloAndIterSpec {
 };
 
 struct NodeFusionPlan {
-  const HloInstruction* original_hlo = nullptr;
+  HloInstruction* original_hlo = nullptr;
   bool should_fuse = false;
 };
 
@@ -141,12 +147,12 @@ struct FusionPlanAndRequirements {
 
 struct HlosAndRequirements {
   // The original HLO (which is outside the fusion computation).
-  const HloInstruction* original_hlo = nullptr;
+  HloInstruction* original_hlo = nullptr;
   // The fused HLO inside the new fusion computation, built by the builder.
   //
   // This can have the same opcode as `original_hlo` or it can be a parameter if
   // the original HLO can't be fused.
-  const HloInstruction* fused_hlo = nullptr;
+  HloInstruction* fused_hlo = nullptr;
   // The requirements imposed by the fused operations.
   //
   // If we fuse further operations they may have to conform to these
@@ -155,7 +161,7 @@ struct HlosAndRequirements {
 };
 
 // Clones the hero kDot operation into the fusion.
-HloInstruction& FuseDot(const HloInstruction& dot,
+HloInstruction& FuseDot(HloInstruction& dot,
                         const std::vector<HlosAndRequirements>& hlos_and_reqs,
                         HloComputation::Builder& builder  // append
 ) {
@@ -164,8 +170,7 @@ HloInstruction& FuseDot(const HloInstruction& dot,
   std::vector<HloInstruction*> hlo_new_operands;
   hlo_new_operands.reserve(dot.operand_count());
   for (int i = 0; i < hlos_and_reqs.size(); ++i) {
-    hlo_new_operands.push_back(
-        const_cast<HloInstruction*>(hlos_and_reqs[i].fused_hlo));
+    hlo_new_operands.push_back(hlos_and_reqs[i].fused_hlo);
   }
   return *builder.AddInstruction(
       dot.CloneWithNewOperands(dot.shape(), hlo_new_operands));
@@ -300,7 +305,7 @@ class FusionPlanBuilder {
     graph_.AddArc(from, to);
   }
 
-  const HloInstruction* GetOriginalHlo(AdjacencyList::NodeId node_id) const {
+  HloInstruction* GetOriginalHlo(AdjacencyList::NodeId node_id) const {
     return node_map_.at(node_id).original_hlo;
   }
 
@@ -311,7 +316,7 @@ class FusionPlanBuilder {
   // Inserts a node for the given HLO and `dim_order` unless already exists.
   // Returns the node id and a bool indicating if a new node was inserted.
   std::pair<AdjacencyList::NodeId, bool> InsertNode(
-      const HloInstruction& hlo, const DimensionOrder& dim_order) {
+      HloInstruction& hlo, const DimensionOrder& dim_order) {
     HloAndIterSpec reuse_key{&hlo, dim_order.ToTensorIterationSpec()};
 
     // Attempt to insert a placeholder. If the key already exists, inserted is
@@ -343,7 +348,7 @@ class FusionPlanBuilder {
   AdjacencyList graph_;
 
   struct Node {
-    const HloInstruction* original_hlo;
+    HloInstruction* original_hlo;
     DimensionOrder dim_order;
     std::optional<bool> should_fuse;
   };
@@ -358,7 +363,7 @@ class FusionPlanBuilder {
 // Builds the fusion map and the requirements which can later be used to
 // actually fuse that subgraph.
 FusionPlanAndRequirements BuildFusionPlanTowardOperands(
-    const HloInstruction& root_hlo, const DimensionOrder& root_dim_order,
+    HloInstruction& root_hlo, const DimensionOrder& root_dim_order,
     const std::optional<int>& max_params,
     const se::GpuComputeCapability& gpu_version,
     const DotProperties& properties,
@@ -388,8 +393,7 @@ FusionPlanAndRequirements BuildFusionPlanTowardOperands(
   while (queue.size() > num_requeued) {
     AdjacencyList::NodeId node_id = queue.front();
     queue.pop();
-    const HloInstruction& original_hlo =
-        *fusion_builder.GetOriginalHlo(node_id);
+    HloInstruction& original_hlo = *fusion_builder.GetOriginalHlo(node_id);
     const DimensionOrder& dim_order = fusion_builder.GetDimOrder(node_id);
 
     // Watch the total number of fusion parameters.
@@ -434,7 +438,7 @@ FusionPlanAndRequirements BuildFusionPlanTowardOperands(
     inputs.erase(node_id);
     fusion_builder.ReserveSpaceForOutNeighbors(node_id,
                                                original_hlo.operand_count());
-    for (const HloInstruction* operand : original_hlo.operands()) {
+    for (HloInstruction* operand : original_hlo.operands()) {
       const DimensionOrder& operand_dim_order = operand_dim_orders.at(operand);
       auto [operand_node_id, is_new_node] =
           fusion_builder.InsertNode(*operand, operand_dim_order);
@@ -471,7 +475,7 @@ HloInstruction& BuildFusionTowardOperandsImpl(
 
   const NodeFusionPlan& node_fusion_plan = fusion_plan.map.at(node_id);
   const bool should_fuse = node_fusion_plan.should_fuse;
-  const HloInstruction& original_hlo = *node_fusion_plan.original_hlo;
+  HloInstruction& original_hlo = *node_fusion_plan.original_hlo;
 
   HloInstruction* fused_hlo = nullptr;
   if (should_fuse) {
@@ -484,7 +488,7 @@ HloInstruction& BuildFusionTowardOperandsImpl(
     fused_hlo = builder.AddInstruction(
         original_hlo.CloneWithNewOperands(original_hlo.shape(), new_operands));
   } else {
-    fusion_params.push_back(const_cast<HloInstruction*>(&original_hlo));
+    fusion_params.push_back(&original_hlo);
     fused_hlo = builder.AddInstruction(HloInstruction::CreateParameter(
         fusion_params.size() - 1, original_hlo.shape(),
         absl::StrCat("parameter_", fusion_params.size() - 1)));
@@ -518,7 +522,7 @@ HloInstruction& BuildFusionTowardOperands(
 // The return value contains the HLOs corresponding to `root_hlo` and the
 // requirements corresponding to the whole fusion so far.
 HlosAndRequirements FuseTowardOperands(
-    const HloInstruction& root_hlo, const DimensionOrder& root_dim_order,
+    HloInstruction& root_hlo, const DimensionOrder& root_dim_order,
     const std::optional<int>& max_params,
     const se::GpuComputeCapability& gpu_version,
     const DotProperties& properties, const DotRequirements& requirements_so_far,
@@ -548,7 +552,7 @@ HlosAndRequirements FuseTowardOperands(
 // The return value contains the HLOs corresponding to the given dot operand and
 // the requirements corresponding to the whole fusion so far.
 absl::StatusOr<HlosAndRequirements> FuseDotOperand(
-    const HloInstruction& dot, int operand_index,
+    HloInstruction& dot, int operand_index,
     const se::GpuComputeCapability& gpu_version,
     HloComputation::Builder& builder,            // append
     std::vector<HloInstruction*>& fusion_params  // append
@@ -556,7 +560,7 @@ absl::StatusOr<HlosAndRequirements> FuseDotOperand(
   // Direct dot inputs have well defined dimension orders.
   TF_ASSIGN_OR_RETURN(const FusionContext context,
                       FusionContext::FromDotOperand(dot, operand_index));
-  const HloInstruction& operand = *dot.operand(operand_index);
+  HloInstruction& operand = *dot.mutable_operand(operand_index);
   return FuseTowardOperands(operand, context.dim_orders().at(&operand),
                             TritonFusionAnalysis::kMaxParameterPerDotOperand,
                             gpu_version, context.dot_properties(),
@@ -577,22 +581,19 @@ absl::StatusOr<HlosAndRequirements> FuseDotOperand(
 // but currently only in special cases, such as binary elementwise operation
 // with broadcast of scalar constant.
 HlosAndRequirements FuseTowardUsers(
-    const HloInstruction& hlo, const HloInstruction& fused_hlo,
+    HloInstruction& hlo, HloInstruction& fused_hlo,
     const DimensionOrder& hlo_dim_order,
     const se::GpuComputeCapability& gpu_version,
     const DotProperties& properties, const DotRequirements& requirements,
     HloComputation::Builder& builder,            // append
     std::vector<HloInstruction*>& fusion_params  // append
 ) {
-  const HlosAndRequirements existing_hlos_and_requirements = {&hlo, &fused_hlo,
-                                                              requirements};
+  HlosAndRequirements existing_hlos_and_requirements = {&hlo, &fused_hlo,
+                                                        requirements};
   if (hlo.user_count() != 1) {
     return existing_hlos_and_requirements;
   }
-  const HloInstruction& user = *hlo.users()[0];
-  if (!legacy_triton::IsDistributiveOverAddition(user)) {
-    return existing_hlos_and_requirements;
-  }
+  HloInstruction& user = *hlo.users()[0];
 
   // Get the dim orders for the user.
   auto opt_user_result = GetUserDimOrdersAndCombinedReqsIfProfitable(
@@ -605,7 +606,7 @@ HlosAndRequirements FuseTowardUsers(
 
   HloInstruction::InstructionVector new_operands;
   if (user.operand_count() == 1) {
-    new_operands.push_back(const_cast<HloInstruction*>(&fused_hlo));
+    new_operands.push_back(&fused_hlo);
   } else {
     // Get the dim orders for the operands of the user.
     // We shouldn't do a profitability check here, we made that decision in
@@ -624,22 +625,21 @@ HlosAndRequirements FuseTowardUsers(
 
     // Fuse the other operands of the user.
     for (int i = 0; i < user.operand_count(); ++i) {
-      const HloInstruction& operand = *user.operand(i);
+      HloInstruction& operand = *user.mutable_operand(i);
       if (&operand == &hlo) {
-        new_operands.push_back(const_cast<HloInstruction*>(&fused_hlo));
+        new_operands.push_back(&fused_hlo);
       } else {
         HlosAndRequirements hlos_and_requirements = FuseTowardOperands(
             operand, operand_dim_orders.at(&operand),
             /*max_params=*/std::nullopt, gpu_version, properties,
             combined_requirements, builder, fusion_params);
-        new_operands.push_back(
-            const_cast<HloInstruction*>(hlos_and_requirements.fused_hlo));
+        new_operands.push_back(hlos_and_requirements.fused_hlo);
         combined_requirements = hlos_and_requirements.requirements;
       }
     }
   }
 
-  const HloInstruction& fused_user = *builder.AddInstruction(
+  HloInstruction& fused_user = *builder.AddInstruction(
       user.CloneWithNewOperands(user.shape(), new_operands));
   return FuseTowardUsers(user, fused_user, user_dim_order, gpu_version,
                          properties, combined_requirements, builder,
@@ -660,14 +660,13 @@ HlosAndRequirements FuseTowardUsers(
 // currently only in special cases, such as binary elementwise operation with
 // broadcast of scalar constant.
 HlosAndRequirements FuseDotOutput(
-    const HloInstruction& dot, const HloInstruction& fused_dot,
+    HloInstruction& dot, HloInstruction& fused_dot,
     const se::GpuComputeCapability& gpu_version,
     const DotRequirements& requirements,
     HloComputation::Builder& builder,            // append
     std::vector<HloInstruction*>& fusion_params  // append
 ) {
-  const auto context =
-      FusionContext::FromDotOutput(dot, /*split_k=*/1, requirements);
+  const auto context = FusionContext::FromDotOutput(dot, requirements);
   return FuseTowardUsers(dot, fused_dot, context.dim_orders().at(&dot),
                          gpu_version, context.dot_properties(),
                          context.requirements(), builder, fusion_params);
@@ -675,54 +674,294 @@ HlosAndRequirements FuseDotOutput(
 
 namespace {
 
-class Decision {
+// Holds all information necessary to insert a fusion computation into the
+// original HLO module.
+struct Fusion {
+  // Ordered pointers to HLO instructions in the original module that are used
+  // as parameters in the fusion computation.
+  std::vector<HloInstruction*> inputs;
+  // The fusion computation.
+  std::unique_ptr<HloComputation> computation;
+  // Pointer to the output in the original HLO module that the fusion
+  // computation replaces.
+  HloInstruction* output = nullptr;
+};
+
+// Some instructions can be codegened by Triton, but we don't allow them in
+// GEMM fusions specifically or it doesn't make sense to fuse.
+bool AllowedInGemmFusion(const HloInstruction& instr) {
+  if (!instr.IsFusible()) {
+    return false;
+  }
+  return HloPredicateIsNotOp<HloOpcode::kFusion, HloOpcode::kDot,
+                             HloOpcode::kParameter, HloOpcode::kReduce>(&instr);
+}
+
+// Returns true if we should consider fusing the instruction into the GEMM
+// fusion.
+bool IncludeInSearchSpace(const HloInstruction& instr,
+                          const se::GpuComputeCapability& gpu_version) {
+  return AllowedInGemmFusion(instr) &&
+         IsTritonSupportedInstruction(instr, gpu_version);
+}
+
+// Holds a module of the search space surrounding a dot instruction in order to
+// create an optimal fusion.
+class FusionSearchSpace {
  public:
-  // Returns true if the emitter capable of emitting the fusion (profitable or
-  // not).
-  bool CanFuse() const { return fusing_decision_.CanFuse() || able_to_fuse_; }
-
-  // Returns true if it's profitable to fuse.
-  bool WantToFuse() const { return fusing_decision_.CanFuse(); }
-
-  std::string Explain() const { return fusing_decision_.Explain(); }
-
-  static Decision Allow() { return {FusionDecision::Allow(), true}; };
-
-  static Decision Deny(absl::string_view value) {
-    return {FusionDecision::Forbid(value), false};
+  FusionSearchSpace(HloInstruction* dot,
+                    const se::GpuComputeCapability& gpu_version)
+      : original_dot_(dot) {
+    module_ = std::make_unique<HloModule>(
+        absl::StrCat(dot->name(), "_fusion_search_space"), HloModuleConfig());
+    HloComputation::Builder builder(absl::StrCat(dot->name(), "_computation"));
+    // Find the highest suitable user of the dot to be the root of the
+    // fusion.
+    HloInstruction* fusion_output = dot;
+    while (fusion_output->user_count() == 1 &&
+           IncludeInSearchSpace(*fusion_output->users()[0], gpu_version)) {
+      fusion_output = fusion_output->users()[0];
+    }
+    // Starting from the root of the fusion, fuse upwards.
+    HloInstruction* cloned_output =
+        FuseOperandsRecursively(fusion_output, builder, gpu_version);
+    entry_ = module_->AddEntryComputation(builder.Build(cloned_output));
   }
 
-  static Decision NotProfitable(absl::string_view value) {
-    return {FusionDecision::Forbid(value), true};
+  HloInstruction* original_dot() const { return original_dot_; }
+  HloComputation* entry() const { return entry_; }
+
+  const absl::flat_hash_map<HloInstruction*, HloInstruction*>&
+  original_to_fused() const {
+    return original_to_fused_;
+  }
+
+  const absl::flat_hash_map<HloInstruction*, HloInstruction*>&
+  fused_to_original() const {
+    return fused_to_original_;
   }
 
  private:
-  Decision(FusionDecision decision, bool able_to_fuse)
-      : fusing_decision_(std::move(decision)), able_to_fuse_(able_to_fuse) {}
-
-  FusionDecision fusing_decision_;
-  bool able_to_fuse_;
+  // Recursive DFS to create maximum possible fusion.
+  HloInstruction* FuseOperandsRecursively(
+      HloInstruction* instr, HloComputation::Builder& builder,
+      const se::GpuComputeCapability& gpu_version);
+  // A module containing the search space. Each op is cloned and can be mapped
+  // to the original HLO with `fused_to_original`.
+  std::unique_ptr<HloModule> module_;
+  // Ordered pointers to HLO instructions in the original module that are used
+  // as parameters in the fusion computation.
+  std::vector<HloInstruction*> inputs_;
+  // The entry computation of the module.
+  HloComputation* entry_ = nullptr;
+  // Maps between original and search space instructions.
+  absl::flat_hash_map<HloInstruction*, HloInstruction*> original_to_fused_;
+  // Maps between search space and original instructions.
+  absl::flat_hash_map<HloInstruction*, HloInstruction*> fused_to_original_;
+  // Pointer to the dot instruction in the original module.
+  HloInstruction* original_dot_ = nullptr;
 };
+
+HloInstruction* FusionSearchSpace::FuseOperandsRecursively(
+    HloInstruction* instr, HloComputation::Builder& builder,
+    const se::GpuComputeCapability& gpu_version) {
+  if (auto it = original_to_fused_.find(instr);
+      it != original_to_fused_.end()) {
+    // We have already processed this instruction. Return the corresponding
+    // instruction within the fusion space.
+    return it->second;
+  }
+
+  if (instr == original_dot_ || IncludeInSearchSpace(*instr, gpu_version)) {
+    VLOG(10) << "Including in search space: " << instr->ToString();
+    // Found a candidate to fuse - recurse on its operands.
+    std::vector<HloInstruction*> new_operands;
+    new_operands.reserve(instr->operand_count());
+    for (HloInstruction* operand : instr->operands()) {
+      new_operands.push_back(
+          FuseOperandsRecursively(operand, builder, gpu_version));
+    }
+    HloInstruction* cloned = builder.AddInstruction(
+        instr->CloneWithNewOperands(instr->shape(), new_operands));
+    original_to_fused_[instr] = cloned;
+    fused_to_original_[cloned] = instr;
+    return cloned;
+  }
+
+  // Boundary reached: create a parameter.
+  VLOG(10) << "Not including in search space: " << instr->ToString();
+  HloInstruction* param =
+      builder.AddInstruction(HloInstruction::CreateParameter(
+          inputs_.size(), instr->shape(),
+          absl::StrCat("parameter_", inputs_.size())));
+  inputs_.push_back(instr);
+  original_to_fused_[instr] = param;
+  fused_to_original_[param] = instr;
+  return param;
+}
+
+// Checks if the fusion can be tiled by SymbolicTileAnalysis.
+bool CanTile(mlir::MLIRContext& mlir_context, const HloFusionAdaptor& fusion) {
+  auto tile_or_error =
+      SymbolicTileAnalysis::AnalyzeFusion(fusion, &mlir_context);
+  if (std::holds_alternative<FusionDecision>(tile_or_error)) {
+    VLOG(3) << "Cannot tile: "
+            << std::get<FusionDecision>(tile_or_error).Explain();
+    return false;
+  }
+  return true;
+}
+
+// Returns true if fusing `producer` into `consumer` is possible and supported.
+bool CanFuse(mlir::MLIRContext& mlir_context, HloInstruction* producer,
+             HloInstruction* consumer) {
+  // If the candidate is not a user of the fusion, we have already fused the
+  // instruction.
+  return consumer->IsUserOf(producer) &&
+         // Parameter means we have reached the end of the search space.
+         producer->opcode() != HloOpcode::kParameter &&
+         CanTile(mlir_context,
+                 *HloFusionAdaptor::ForProducerConsumer(producer, consumer));
+}
+
+// Attempts to fuse all candidates and their operands into the fusion.
+void FuseOperandsBFS(mlir::MLIRContext& mlir_context,
+                     const HloInstruction::InstructionVector& candidates,
+                     absl::flat_hash_set<HloInstruction*>& visited,
+                     HloInstruction* fusion) {
+  std::queue<HloInstruction*> queue;
+  for (HloInstruction* operand : candidates) {
+    if (visited.insert(operand).second) {
+      queue.push(operand);
+    }
+  }
+  while (!queue.empty()) {
+    HloInstruction* candidate = queue.front();
+    queue.pop();
+
+    if (!CanFuse(mlir_context, candidate, fusion)) {
+      VLOG(5) << "Cannot fuse operand: " << candidate->ToString();
+      continue;
+    }
+    VLOG(5) << "Fusing operand: " << candidate->ToString();
+    fusion->FuseInstruction(candidate);
+    for (HloInstruction* operand : candidate->operands()) {
+      if (visited.insert(operand).second) {
+        queue.push(operand);
+      }
+    }
+  }
+}
+
+// Fuses user into the fusion. If the user has more operands than the fusion,
+// then it will also attempt to fuse its operands. Returns the new fusion as the
+// only way to fuse a user is to create a new fusion.
+absl::StatusOr<HloInstruction*> FuseUserAndOperands(
+    mlir::MLIRContext& mlir_context, HloInstruction* fusion,
+    HloInstruction* user, absl::flat_hash_set<HloInstruction*>& visited) {
+  int64_t operand_count = fusion->operand_count();
+  HloInstruction* new_fusion =
+      fusion->parent()->AddInstruction(HloInstruction::CreateFusion(
+          user->shape(), HloInstruction::FusionKind::kCustom, user));
+  TF_RETURN_IF_ERROR(fusion->parent()->ReplaceInstruction(user, new_fusion));
+  new_fusion->MergeFusionInstruction(fusion);
+  CHECK_EQ(0, fusion->users().size());
+  TF_RETURN_IF_ERROR(fusion->parent()->RemoveInstruction(fusion));
+  if (new_fusion->operand_count() > operand_count) {
+    FuseOperandsBFS(mlir_context, new_fusion->operands(), visited, new_fusion);
+  }
+  return new_fusion;
+}
+
+// Creates a fusion from the search space. Starting from the dot instruction,
+// it fuses tileable operands using BFS. Then it fuses tileable users and their
+// operands until it reaches the root of the search space.
+absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateTileableFusion(
+    const FusionSearchSpace& fusion_search_space,
+    const se::GpuComputeCapability gpu_version, absl::string_view name) {
+  HloInstruction* original_dot = fusion_search_space.original_dot();
+  HloInstruction* dot =
+      fusion_search_space.original_to_fused().at(original_dot);
+  mlir::MLIRContext mlir_context;
+  RegisterSymbolicExprStorage(&mlir_context);
+  if (!CanTile(mlir_context, *HloFusionAdaptor::ForInstruction(dot))) {
+    return FusionDecision::Forbid("Cannot tile the dot instruction.");
+  }
+
+  // Start with a fusion containing only the dot instruction.
+  auto entry = fusion_search_space.entry();
+  auto fusion = entry->AddInstruction(HloInstruction::CreateFusion(
+      dot->shape(), HloInstruction::FusionKind::kCustom, dot));
+  TF_RETURN_IF_ERROR(entry->ReplaceInstruction(dot, fusion));
+
+  // Keep track of the original HLO the fusion is replacing.
+  HloInstruction* original_output = original_dot;
+
+  // BFS of operands until we cannot tile.
+  absl::flat_hash_set<HloInstruction*> visited;
+  FuseOperandsBFS(mlir_context, fusion->operands(), visited, fusion);
+
+  // Fuse in users until we cannot tile or reach the root.
+  while (!fusion->IsRoot()) {
+    // Search space was created so that the result only ever has a single user.
+    CHECK_EQ(fusion->users().size(), 1);
+    auto user = fusion->users()[0];
+    if (!CanFuse(mlir_context, fusion, user)) {
+      VLOG(5) << "Cannot fuse user: " << user->ToString();
+      break;
+    }
+    VLOG(5) << "Fusing user into epilogue: " << user->ToString();
+    TF_ASSIGN_OR_RETURN(
+        fusion, FuseUserAndOperands(mlir_context, fusion, user, visited));
+    original_output = fusion_search_space.fused_to_original().at(user);
+  }
+
+  // Find inputs to the fusion from the original module.
+  std::vector<HloInstruction*> fusion_inputs;
+  for (HloInstruction* operand : fusion->operands()) {
+    fusion_inputs.push_back(
+        fusion_search_space.fused_to_original().at(operand));
+  }
+
+  auto fusion_computation =
+      Cast<HloFusionInstruction>(fusion)->fused_instructions_computation();
+  return Fusion{std::move(fusion_inputs),
+                fusion_computation->Clone(std::string(name)), original_output};
+}
+
+absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateDotFusionV2(
+    HloDotInstruction& dot, const se::GpuComputeCapability gpu_version,
+    absl::string_view name) {
+  VLOG(3) << "Creating dot fusion v2 around dot: " << dot.ToString();
+  FusionSearchSpace fusion_search_space(&dot, gpu_version);
+  VLOG(3) << "Found fusion search space: \n"
+          << fusion_search_space.entry()->ToString();
+  return CreateTileableFusion(fusion_search_space, gpu_version, name);
+}
 
 }  // namespace
 
 // Fuses dot and the compatible and profitable to fuse operations around it
-// into a new fusion computation constructed using the builder. fusion_inputs
-// get populated with the non-fused instructions that become operands of the
-// call to this fusion. fusion_output_ptr (if not nullptr) gets assigned the
-// original instruction that has to be replaced by the call to the fusion.
-absl::StatusOr<Decision> CreateDotFusion(
-    const HloDotInstruction& dot, const se::GpuComputeCapability gpu_version,
-    HloComputation::Builder& builder,
-    std::vector<HloInstruction*>& fusion_inputs,
-    HloInstruction** fusion_output_ptr) {
+// into a new fusion computation.
+absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateDotFusion(
+    HloDotInstruction& dot, const se::GpuComputeCapability gpu_version,
+    absl::string_view name) {
   VLOG(5) << dot.ToString();
   if (CodegenDecision is_supported =
-          legacy_triton::IsTritonSupportedInstruction(dot, gpu_version);
+          IsTritonSupportedInstruction(dot, gpu_version);
       !is_supported) {
-    VLOG(3) << is_supported.Explain();
-    return Decision::Deny(is_supported.Explain());
+    return is_supported;
   }
+
+  if (dot.GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_experimental_gemm_fusion_v2()) {
+    return CreateDotFusionV2(dot, gpu_version, name);
+  }
+
+  HloComputation::Builder builder(name);
+  std::vector<HloInstruction*> fusion_inputs;
 
   std::vector<HlosAndRequirements> hlos_and_reqs;
   hlos_and_reqs.reserve(dot.operand_count());
@@ -741,10 +980,7 @@ absl::StatusOr<Decision> CreateDotFusion(
       FuseDotOutput(dot, fused_dot, gpu_version, lhs_hlos_and_reqs.requirements,
                     builder, fusion_inputs);
 
-  if (fusion_output_ptr != nullptr) {
-    *fusion_output_ptr =
-        const_cast<HloInstruction*>(fused_output_and_reqs.original_hlo);
-  }
+  HloInstruction* fusion_output = fused_output_and_reqs.original_hlo;
 
   // We cannot handle int4 parameters if the batch dimension is the minor one.
   // The cost of analysis could be expensive, so we only do it if we have to.
@@ -761,7 +997,7 @@ absl::StatusOr<Decision> CreateDotFusion(
               dot, TritonFusionAnalysis::Scope::LHS) ||
           !analysis.IsBatchDimMinorForInt4Parameter(
               dot, TritonFusionAnalysis::Scope::RHS)) {
-        return Decision::Deny(
+        return FusionDecision::Forbid(
             "Fusion is not possible because the parameter with the type S4 has "
             "minor batch dimension.");
       }
@@ -778,7 +1014,7 @@ absl::StatusOr<Decision> CreateDotFusion(
       algorithm == PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3 ||
       algorithm == PrecisionConfig::ALG_DOT_F32_F32_F32 ||
       dot.GetModule()->config().debug_options().xla_gpu_triton_gemm_any()) {
-    return Decision::Allow();
+    return Fusion{std::move(fusion_inputs), builder.Build(), fusion_output};
   }
 
   bool is_pure_matmul = true;
@@ -795,10 +1031,10 @@ absl::StatusOr<Decision> CreateDotFusion(
   });
 
   if (is_pure_matmul) {
-    return Decision::NotProfitable("Pure Matmul");
+    return FusionDecision::Forbid("Pure Matmul");
   }
 
-  return Decision::Allow();
+  return Fusion{std::move(fusion_inputs), builder.Build(), fusion_output};
 }
 
 // Extracts into fused computations parts of HLO graph including dot()
@@ -826,32 +1062,27 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
     }
 
     std::string fusion_name = absl::StrCat("gemm_fusion_", dot->name());
-    HloComputation::Builder builder(absl::StrCat(fusion_name, "_computation"));
-    std::vector<HloInstruction*> fusion_inputs;
-    HloInstruction* fusion_output = nullptr;
     TF_ASSIGN_OR_RETURN(
-        const Decision decision,
-        CreateDotFusion(*Cast<HloDotInstruction>(dot), gpu_version_, builder,
-                        fusion_inputs, &fusion_output));
-    if (!decision.CanFuse()) {
+        auto fusion_or_decision,
+        CreateDotFusion(*Cast<HloDotInstruction>(dot), gpu_version_,
+                        absl::StrCat(fusion_name, "_computation")));
+
+    if (std::holds_alternative<FusionDecision>(fusion_or_decision)) {
+      const FusionDecision& decision =
+          std::get<FusionDecision>(fusion_or_decision);
       VLOG(3) << "Not fusing: " << decision.Explain();
       return absl::OkStatus();
     }
-    // If a GEMM requiring padding for cuBLAS is encountered here this
-    // happened because earlier ShouldTritonHandleGEMM() accepted it and padding
-    // was skipped. Accept it ignoring profitability checks.
-    if (!CublasRequiresPadding(*Cast<HloDotInstruction>(dot), gpu_version_) &&
-        !decision.WantToFuse()) {
-      return absl::OkStatus();
-    }
+
+    Fusion fusion = std::get<Fusion>(std::move(fusion_or_decision));
 
     HloComputation* computation =
-        dot->GetModule()->AddComputationAndUnifyNamesAndIds(builder.Build(),
-                                                            /*is_entry=*/false);
+        dot->GetModule()->AddComputationAndUnifyNamesAndIds(
+            std::move(fusion.computation), /*is_entry=*/false);
     HloInstruction* dot_fusion =
         dot->parent()->AddInstruction(HloInstruction::CreateFusion(
             computation->root_instruction()->shape(),
-            HloInstruction::FusionKind::kCustom, fusion_inputs, computation));
+            HloInstruction::FusionKind::kCustom, fusion.inputs, computation));
     // Copy the metadata of the `dot` to the newly created `fusion` op. This
     // is convenient for handling metadata in split-k rewriting subsequently.
     dot_fusion->set_metadata(dot->metadata());
@@ -864,14 +1095,14 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
     backend_config.set_kind(kTritonGemmFusionKind);
     TF_RETURN_IF_ERROR(dot_fusion->set_backend_config(gpu_config));
 
-    if (fusion_output->IsRoot()) {
-      fusion_output->parent()->set_root_instruction(dot_fusion);
+    if (fusion.output->IsRoot()) {
+      fusion.output->parent()->set_root_instruction(dot_fusion);
       TF_RETURN_IF_ERROR(
-          fusion_output->parent()->RemoveInstructionAndUnusedOperands(
-              fusion_output));
+          fusion.output->parent()->RemoveInstructionAndUnusedOperands(
+              fusion.output));
       MarkAsChanged();
     } else {
-      TF_RETURN_IF_ERROR(ReplaceInstruction(fusion_output, dot_fusion));
+      TF_RETURN_IF_ERROR(ReplaceInstruction(fusion.output, dot_fusion));
     }
     XLA_VLOG_LINES(5, computation->ToString(HloPrintOptions::ShortParsable()));
     return absl::OkStatus();
@@ -884,7 +1115,11 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
             .debug_options()
             .xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
         module->config().debug_options().xla_gpu_enable_cublaslt();
-    if (has_grouped_gemm) {
+    const bool ragged_dot_fusion_enabled =
+        module->config()
+            .debug_options()
+            .xla_gpu_experimental_use_ragged_dot_fusion();
+    if (has_grouped_gemm || ragged_dot_fusion_enabled) {
       // At the moment, if Gpublaslt support is available, it is prefered
       // over triton fused ragged-dot. Therefore, we skip this pass and
       // does not fused the ragged-dot op if the Gpublaslt support
@@ -972,8 +1207,7 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
         *gpu_config.mutable_fusion_backend_config();
     backend_config.set_kind(kTritonGemmFusionKind);
     TF_RETURN_IF_ERROR(fusion->set_backend_config(gpu_config));
-    HloInstruction* fusion_output =
-        const_cast<HloInstruction*>(fused_output_and_reqs.original_hlo);
+    HloInstruction* fusion_output = fused_output_and_reqs.original_hlo;
     TF_RETURN_IF_ERROR(ReplaceInstruction(fusion_output, fusion));
     MarkAsChanged();
     return absl::OkStatus();
@@ -991,15 +1225,6 @@ absl::StatusOr<bool> RunOnComputation(
 }
 
 }  // namespace
-
-bool ShouldTritonHandleGEMM(HloDotInstruction& dot,
-                            const se::GpuComputeCapability& gpu_version) {
-  std::vector<HloInstruction*> fusion_inputs;
-  HloComputation::Builder builder("disposable");
-  return CreateDotFusion(dot, gpu_version, builder, fusion_inputs,
-                         /*fusion_output_ptr=*/nullptr)
-      ->WantToFuse();
-}
 
 absl::StatusOr<bool> GemmFusion::RunImpl(
     HloModule* module,

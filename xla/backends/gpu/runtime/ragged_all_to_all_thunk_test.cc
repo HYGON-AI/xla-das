@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/sycl/sycl_platform_id.h"
 #include "xla/tests/hlo_test_base_legacy.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
@@ -73,7 +74,7 @@ TEST_F(GpuRaggedAllToAllTest, TestConvertToCommands) {
   ENTRY main {
       p0 = f32[8] parameter(0)
       id = u32[] replica-id()
-      output = f32[8] constant({0, 0, 0, 0, 0, 0, 0, 0})
+      output = f32[8] constant({-1, -1, -1, -1, -1, -1, -1, -1})
       send_sizes = s32[2] constant({4, 4})
       recv_sizes = s32[2] constant({4, 4})
       input_offsets = s32[2] constant({0, 4})
@@ -103,7 +104,7 @@ TEST_F(GpuRaggedAllToAllTest, TestConvertToCommands) {
       module->entry_computation()->root_instruction();
   ASSERT_EQ(root_instr->opcode(), HloOpcode::kRaggedAllToAll);
   const HloRaggedAllToAllInstruction* ra2a_instr =
-      tensorflow::down_cast<const HloRaggedAllToAllInstruction*>(root_instr);
+      absl::down_cast<const HloRaggedAllToAllInstruction*>(root_instr);
   ASSERT_NE(ra2a_instr, nullptr);
 
   // Buffer and Allocation Setup
@@ -164,7 +165,7 @@ TEST_F(GpuRaggedAllToAllTest, TestCommandBufferThunkContainsCorrectThunks) {
 
   ENTRY entry {
     p0 = f32[8] parameter(0)
-    output = f32[8] constant({0, 0, 0, 0, 0, 0, 0, 0})
+    output = f32[8] constant({-1, -1, -1, -1, -1, -1, -1, -1})
     send_sizes = s32[2] constant({4, 4})
     recv_sizes = s32[2] constant({4, 4})
     input_offsets = s32[2] constant({0, 4})
@@ -185,6 +186,10 @@ TEST_F(GpuRaggedAllToAllTest, TestCommandBufferThunkContainsCorrectThunks) {
                           ParseAndReturnVerifiedModule(hlo_text, config));
 
   se::StreamExecutor* executor = backend().default_stream_executor();
+  // TODO(Intel-tf): To remove this check once command buffer is implemented.
+  if (executor->GetPlatform()->id() == se::sycl::kSyclPlatformId) {
+    GTEST_SKIP() << "Command buffer is not supported on SYCL platform yet.";
+  }
   // CHECK_NE(executor, nullptr);
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -199,7 +204,7 @@ TEST_F(GpuRaggedAllToAllTest, TestCommandBufferThunkContainsCorrectThunks) {
 
   // Downcast to GPU executable
   xla::gpu::GpuExecutable* gpu_executable =
-      tensorflow::down_cast<xla::gpu::GpuExecutable*>(executable.get());
+      absl::down_cast<GpuExecutable*>(executable.get());
   ASSERT_NE(gpu_executable, nullptr);
 
   // Get the thunk sequence and check its size and type
@@ -210,7 +215,7 @@ TEST_F(GpuRaggedAllToAllTest, TestCommandBufferThunkContainsCorrectThunks) {
   ASSERT_EQ(thunk->kind(), Thunk::kCommandBuffer);
 
   CommandBufferThunk* cmd_buffer_thunk =
-      tensorflow::down_cast<CommandBufferThunk*>(thunk.get());
+      absl::down_cast<CommandBufferThunk*>(thunk.get());
   ASSERT_NE(cmd_buffer_thunk, nullptr);
 
   std::vector<Kind> kinds;
@@ -221,15 +226,16 @@ TEST_F(GpuRaggedAllToAllTest, TestCommandBufferThunkContainsCorrectThunks) {
   }
 
   // The collective is sync (single device), so no AsyncStart/Done wrapping.
-  EXPECT_THAT(kinds, ElementsAre(Kind::kKernel, Kind::kKernel, Kind::kKernel,
-                                 Kind::kKernel, Kind::kRaggedAllToAll));
+  EXPECT_THAT(kinds, ElementsAre(Kind::kCustomKernel, Kind::kCustomKernel,
+                                 Kind::kCustomKernel, Kind::kCustomKernel,
+                                 Kind::kRaggedAllToAll));
 }
 
 TEST(CollectiveThunkTest, ProtoRoundTrip) {
   ThunkProto proto = tsl::proto_testing::ParseTextProtoOrDie<ThunkProto>(
       R"pb(
         thunk_info { profile_annotation: "partition_id_profile_annotation" }
-        ragged_all_to_all_start_thunk {
+        ragged_all_to_all_thunk {
           collective_config {}
           num_total_updates: 10
           num_input_rows: 2
@@ -244,10 +250,10 @@ TEST(CollectiveThunkTest, ProtoRoundTrip) {
   std::vector<BufferAllocation> buffer_allocations = {
       BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)};
 
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<RaggedAllToAllThunk> thunk,
-                       RaggedAllToAllThunk::FromProto(
-                           thunk_info, proto.ragged_all_to_all_start_thunk(),
-                           buffer_allocations));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<RaggedAllToAllThunk> thunk,
+      RaggedAllToAllThunk::FromProto(
+          thunk_info, proto.ragged_all_to_all_thunk(), buffer_allocations));
 
   // We're not setting the fast interconnect slice size override in the
   // proto, so it should be nullopt in the thunk.

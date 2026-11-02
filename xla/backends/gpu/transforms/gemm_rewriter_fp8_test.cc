@@ -59,8 +59,9 @@ namespace {
 
 namespace m = ::xla::match;
 
-class ParameterizedFp8GemmRewriteTest : public HloPjRtInterpreterReferenceMixin<
-                                            ParameterizedGemmRewriteTestBase> {
+class ParameterizedFp8GemmRewriteTest
+    : public HloPjRtInterpreterReferenceMixin<ParameterizedGemmRewriteTestBase>,
+      public ::testing::WithParamInterface<bool> {
  public:
   ParameterizedFp8GemmRewriteTest() {
     if (IsCuda()) {
@@ -88,6 +89,10 @@ class ParameterizedFp8GemmRewriteTest : public HloPjRtInterpreterReferenceMixin<
   void SetUp() override {
     if (IsCuda() && GetToolkitVersion() < se::SemanticVersion{12, 0, 0}) {
       GTEST_SKIP() << "F8 gemm rewrite is only supported in CUDA 12 and above.";
+    }
+
+    if (IsCuda() && !HasFp8Support()) {
+      GTEST_SKIP() << "FP8 is not supported on this GPU architecture.";
     }
 
     if (IsRocm() && GetToolkitVersion() < se::SemanticVersion{6, 0, 0}) {
@@ -174,7 +179,7 @@ class ParameterizedFp8GemmRewriteTest : public HloPjRtInterpreterReferenceMixin<
   static constexpr const char* kF8E4M3AmaxPlaceholder{"<<F8E4M3_AMAX>>"};
 };
 
-TEST_P(ParameterizedFp8GemmRewriteTest, SupportsF8NonMajorBatchDim) {
+TEST_F(ParameterizedFp8GemmRewriteTest, SupportsF8NonMajorBatchDim) {
   const char* hlo_text = R"(
 HloModule t
 
@@ -199,7 +204,35 @@ ENTRY main {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-2, 1e-2}));
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, DoNotRewriteToF8OnPreAda) {
+TEST_F(ParameterizedFp8GemmRewriteTest, F8TransposeWithNonMajorBatchDim) {
+  RunAndFilecheckHloRewrite(
+      R"(
+e {
+  lhs = <<F8E5M2>>[2,2,16]{2,1,0} parameter(0)
+  rhs = <<F8E4M3>>[8,2,16]{0,2,1} parameter(1)
+  out = f32[2,2,8]{2,1,0} dot(lhs, rhs),
+      lhs_batch_dims={1}, lhs_contracting_dims={2},
+      rhs_batch_dims={1}, rhs_contracting_dims={2}
+})",
+      GemmRewriter(CudaHopperOrRocmCapability(), GetToolkitVersion(),
+                   GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only}),
+      R"(
+; CHECK:         [[LHS_PAD:%[^ ]+]] = <<F8E5M2>>[16,2,16]{{.*}} pad
+; CHECK:         [[RHS_TRANSPOSE:%[^ ]+]] = <<F8E4M3>>[2,8,16]{{.*}} transpose
+; CHECK:         [[RHS_BITCAST:%[^ ]+]] = <<F8E4M3>>[16,2,8]{{.*}} bitcast([[RHS_TRANSPOSE]])
+; CHECK:         [[RHS_PAD:%[^ ]+]] = <<F8E4M3>>[16,2,16]{{.*}} pad([[RHS_BITCAST]]
+; CHECK:         {{.*}} custom-call([[LHS_PAD]], [[RHS_PAD]]
+; CHECK:           custom_call_target="__cublas$lt$matmul$f8"
+; CHECK:           backend_config={
+; CHECK-DAG:         "lhs_contracting_dimensions":["2"]
+; CHECK-DAG:         "rhs_contracting_dimensions":["0"]
+; CHECK-DAG:         "lhs_batch_dimensions":["1"]
+; CHECK-DAG:         "rhs_batch_dimensions":["1"]
+; CHECK:           }
+      )");
+}
+
+TEST_F(ParameterizedFp8GemmRewriteTest, DoNotRewriteToF8OnPreAda) {
   if (!IsCuda()) {
     GTEST_SKIP() << "FP8 Rewrite pattern is different on ROCM-6.2 ";
   }
@@ -227,7 +260,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, DoNotRewriteToF8OnPreAda) {
           )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, DoNotRewriteOnPreAdaWithF32Output) {
+TEST_F(ParameterizedFp8GemmRewriteTest, DoNotRewriteOnPreAdaWithF32Output) {
   if (HasFp8Support()) {
 #if XLA_ROCM_ENABLE_HCU
     GTEST_SKIP() << "Test requires a pre-Ada GPU or an HCU prior to BW1000.";
@@ -256,7 +289,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, DoNotRewriteOnPreAdaWithF32Output) {
           )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, UnsupportedTypesF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, UnsupportedTypesF8) {
   // Test with types unsupported by cuBLAS LT when FP8 is used. cuBLAS LT with
   // FP8 requires one of the operands to be F8E4M3FN.
   const char* hlo_text = R"(
@@ -285,7 +318,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnsupportedTypesF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -341,7 +374,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDF8) {
 }
 
 // Do not fuse FP8 matrix bias.
-TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDMatrixBiasF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDMatrixBiasF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -389,7 +422,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDMatrixBiasF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDColMajorLhsF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDColMajorLhsF8) {
   const char* hlo_text = R"(
 HloModule test
     ENTRY test {
@@ -441,7 +474,7 @@ HloModule test
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -493,7 +526,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDPaddedF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDPaddedF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -551,7 +584,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDPaddedF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDBitcastF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDBitcastF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -587,7 +620,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDBitcastF8) {
 
 // Test case where F8 inputs are converted to F32 before the dot, but without
 // any scaling.
-TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDWithConvertF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDWithConvertF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -632,7 +665,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDWithConvertF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDUnaryOpsF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDUnaryOpsF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -696,7 +729,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDUnaryOpsF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest,
+TEST_F(ParameterizedFp8GemmRewriteTest,
        UnscaledABUnscaledDUnaryOpsWithConvertF8) {
   const char* hlo_text = R"(
     HloModule test
@@ -754,7 +787,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDDynamicSliceF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDDynamicSliceF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -815,7 +848,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDDynamicSliceF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDSelectF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDSelectF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -881,7 +914,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDSelectF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest,
+TEST_F(ParameterizedFp8GemmRewriteTest,
        ScaledABUnscaledDSelectNonzeroConstantF8) {
   const char* hlo_text = R"(
     HloModule test
@@ -913,7 +946,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
   EXPECT_FALSE(changed);
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, BatchedScaledABUnscaledDF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, BatchedScaledABUnscaledDF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -965,7 +998,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, BatchedScaledABUnscaledDF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABAlphaDF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABAlphaDF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -1021,7 +1054,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABAlphaDF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDReluActivationF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDReluActivationF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -1078,7 +1111,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDReluActivationF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest,
+TEST_F(ParameterizedFp8GemmRewriteTest,
        ScaledABUnscaledDVectorBiasThenApproxGeluActivationF8) {
   const char* hlo_text = R"(
     HloModule test
@@ -1177,7 +1210,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
   }
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest,
+TEST_F(ParameterizedFp8GemmRewriteTest,
        ScaledABUnscaledDApproxGeluActivationF8) {
   const char* hlo_text = R"(
     HloModule test
@@ -1273,7 +1306,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
   }
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, InvScaledABUnscaledDF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, InvScaledABUnscaledDF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -1303,7 +1336,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, InvScaledABUnscaledDF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDMatrixBiasF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDMatrixBiasF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -1365,7 +1398,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDMatrixBiasF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDMatrixBiasPaddedF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDMatrixBiasPaddedF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -1429,7 +1462,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDMatrixBiasPaddedF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABScaledDF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABScaledDF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -1486,7 +1519,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABScaledDF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABScaledF32DF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABScaledF32DF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -1535,7 +1568,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABScaledF32DF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABInvScaledF32DF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABInvScaledF32DF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -1584,7 +1617,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABInvScaledF32DF8) {
 
 // Do not fuse output scaling without type conversion when a matrix bias was
 // fused.
-TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABScaledF32DMatrixBiasF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABScaledF32DMatrixBiasF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -1637,7 +1670,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABScaledF32DMatrixBiasF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -1702,7 +1735,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABInvScaledDF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABInvScaledDF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -1745,7 +1778,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABInvScaledDF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDReluActivationF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDReluActivationF8) {
   const char* hlo_text = R"(
     HloModule test
     ENTRY test {
@@ -1811,7 +1844,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDReluActivationF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDMatrixBiasWithDAmaxF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDMatrixBiasWithDAmaxF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -1891,7 +1924,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDMatrixBiasWithDAmaxF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDVectorBiasF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDVectorBiasF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -1964,7 +1997,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDVectorBiasF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF32VectorBiasF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF32VectorBiasF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -2023,7 +2056,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF32VectorBiasF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest,
+TEST_F(ParameterizedFp8GemmRewriteTest,
        ScaledABUnscaledDVectorBiasThenReluActivationF8) {
   const char* hlo_text = R"(
     HloModule test
@@ -2084,7 +2117,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDVectorBiasF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDVectorBiasF8) {
   const char* hlo_text = R"(
     HloModule test
     ENTRY test {
@@ -2160,7 +2193,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDVectorBiasF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest,
+TEST_F(ParameterizedFp8GemmRewriteTest,
        Rank3ScaledABUnscaledDVectorBiasPaddedF8) {
   const char* hlo_text = R"(
     HloModule test
@@ -2246,7 +2279,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDMatrixBiasF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDMatrixBiasF8) {
   const char* hlo_text = R"(
     HloModule test
     ENTRY test {
@@ -2318,7 +2351,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDMatrixBiasF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest,
+TEST_F(ParameterizedFp8GemmRewriteTest,
        Rank3ScaledABUnscaledDMatrixBiasPaddedF8) {
   const char* hlo_text = R"(
     HloModule test
@@ -2402,7 +2435,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 
 // Do not fuse matrix bias When there is a slice that does not chop off the ends
 // of dimensions.
-TEST_P(ParameterizedFp8GemmRewriteTest,
+TEST_F(ParameterizedFp8GemmRewriteTest,
        ScaledABUnscaledDMatrixBiasWithSliceF8) {
   const char* hlo_text = R"(
     HloModule test
@@ -2466,7 +2499,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest,
+TEST_F(ParameterizedFp8GemmRewriteTest,
        ScaledABUnscaledDMatrixBiasThenVectorBiasF8) {
   const char* hlo_text = R"(
     HloModule test
@@ -2531,7 +2564,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDWithDAmaxF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDWithDAmaxF8) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -2606,7 +2639,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDWithDAmaxF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest,
+TEST_F(ParameterizedFp8GemmRewriteTest,
        ScaledABScaledDWithDAmaxF8WithF16Intermediates) {
   // This is the same as ScaledABScaledDWithDAmaxF8, but uses F16 intermediate
   // values instead of F32 intermediate values.
@@ -2687,7 +2720,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest,
+TEST_F(ParameterizedFp8GemmRewriteTest,
        ScaledABScaledDReluActivationWithDAmaxF8) {
   const char* hlo_text = R"(
     HloModule test
@@ -2765,7 +2798,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDPrecisionF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDPrecisionF8) {
   const char* raw_hlo_template = R"(
     HloModule test
 
@@ -2797,7 +2830,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDPrecisionF8) {
   EXPECT_TRUE(RunAndCompare(hlo_text_highest, ErrorSpec{1e-4, 1e-4}));
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8Parameterized) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8Parameterized) {
   std::array<std::array<absl::string_view, 7>, 32> combinations;
   int i = 0;
 
@@ -2864,7 +2897,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8Parameterized) {
   }
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest,
+TEST_F(ParameterizedFp8GemmRewriteTest,
        ScaledABUnscaledDF8ParameterizedBatched) {
   // TODO(wenscarl): For batched matmul, not all combinations of A, B and
   // output layouts get pattern matched successfully to FP8 custom call. Only
@@ -2932,7 +2965,7 @@ ENTRY f {
   }
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8TF32E5M2) {
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8TF32E5M2) {
   const char* hlo_text = R"(
     HloModule test
 
@@ -2962,7 +2995,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8TF32E5M2) {
           )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, FnuzTypeF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, FnuzTypeF8) {
   // Test that FNUZ FP8 gemms are not rewritten, as cuBLAS does not support them
   const char* hlo_text = R"(
     HloModule test
@@ -3037,7 +3070,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, FnuzTypeF8) {
   }
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, NoTransposeOnBlackwellF8) {
+TEST_F(ParameterizedFp8GemmRewriteTest, NoTransposeOnBlackwellF8) {
   if (!IsBlackwell()) {
     GTEST_SKIP() << "Test requires a Blackwell GPU.";
   }
@@ -3079,9 +3112,6 @@ TEST_P(ParameterizedFp8GemmRewriteTest, NoTransposeOnBlackwellF8) {
 ; CHECK:           }
           )");
 }
-
-INSTANTIATE_TEST_SUITE_P(Fp8CublasTestsBothLegacyAndLt,
-                         ParameterizedFp8GemmRewriteTest, ::testing::Bool());
 
 }  // namespace
 }  // namespace gpu

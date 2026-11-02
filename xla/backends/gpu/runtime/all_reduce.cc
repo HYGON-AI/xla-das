@@ -252,12 +252,25 @@ absl::Status IsAllReduceKernelSupported(
   if (!is_collective_kernel_enabled) {
     return absl::UnimplementedError("Collective kernel is not enabled.");
   }
-  const auto compute_capability = device_info.cuda_compute_capability();
-  if (!compute_capability.IsAtLeastHopper()) {
+  // Check if the device supports Triton collective codegen:
+  // CUDA: Requires compute capability 9.0+ (Hopper or newer)
+  if (!device_info.cuda_compute_capability().IsAtLeastHopper() &&
+      !device_info.gpu_compute_capability().IsRocm()) {
+    return absl::UnimplementedError(absl::StrCat(
+        "Triton collective codegen requires CUDA compute capability >= 9.0 "
+        "(Hopper or newer) or a supported ROCm device. "
+        "Got: ",
+        device_info.gpu_compute_capability().ToString(), "."));
+  }
+  // ROCm: the cross-device barrier relies on a system-scope release store
+  // becoming visible to peers without extra cache maintenance, which gfx90a
+  // does not guarantee.
+  if (const auto* rocm_cc =
+          device_info.gpu_compute_capability().rocm_compute_capability();
+      rocm_cc != nullptr && !rocm_cc->has_peer_visible_atomics()) {
     return absl::UnimplementedError(
-        absl::StrCat("Collective kernel is not supported for compute "
-                     "capability less than 9.0. Got ",
-                     compute_capability.ToString(), "."));
+        absl::StrCat("Collective kernels are not supported on ",
+                     rocm_cc->gfx_version(), "."));
   }
   // TODO(b/383125489): Support variadic arguments.
   if (num_operands != 1) {

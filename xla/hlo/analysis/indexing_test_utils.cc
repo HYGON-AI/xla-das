@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -31,15 +30,12 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/Support/MathExtras.h"
-#include "mlir/AsmParser/AsmParser.h"
-#include "mlir/IR/AffineExpr.h"
-#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
@@ -47,13 +43,9 @@ limitations under the License.
 #include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/status_macros.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace {
-
-using ::mlir::AffineExpr;
-using ::mlir::AffineMap;
 
 std::string FormatDimsAndSyms(absl::Span<int64_t const> dims,
                               absl::Span<int64_t const> syms) {
@@ -143,21 +135,55 @@ HloInstructionIndexing IndexingTestBase::GetInputToOutputIndexing(
   return indexing;
 }
 
-// Since MLIR does not have AffineExprAttr, we construct an AffineMap and then
-// retrieve its first result.
-AffineExpr ParseAffineExpr(absl::string_view serialized_affine_expr,
-                           mlir::MLIRContext* mlir_context) {
-  std::string full_affine_map_string = absl::StrCat(
-      "affine_map<(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9)"
-      "[s0, s1, s2, s3, s4, s5, s6, s7, s8, s9] -> (",
-      serialized_affine_expr, ")>");
-  return mlir::cast<mlir::AffineMapAttr>(
-             mlir::parseAttribute(full_affine_map_string, mlir_context))
-      .getValue()
-      .getResult(0);
+std::string GetMismatchReport(int lhs_index, int rhs_index,
+                              absl::string_view expected,
+                              absl::string_view actual) {
+  // Failsafe. Should never happen if only called when ApproximateMatch returns
+  // false.
+  if (lhs_index == expected.size() && rhs_index == actual.size()) {
+    return "Strings match (ignoring whitespace).";
+  }
+  std::string report =
+      absl::StrCat("\nMismatch found. Expected char at ", lhs_index,
+                   ", Actual char at ", rhs_index, "\n");
+
+  const auto append_context = [&](absl::string_view str, size_t mismatch_idx,
+                                  absl::string_view label) {
+    static constexpr size_t kContextWidth = 10;
+    const size_t start =
+        mismatch_idx > kContextWidth ? mismatch_idx - kContextWidth : 0;
+    const size_t end = std::min(str.length(), mismatch_idx + kContextWidth);
+    std::string line = absl::StrCat(label, ": ");
+    static constexpr absl::string_view kTruncated = "[truncated]";
+    static constexpr absl::string_view kEOF = "[EOF]";
+    if (start > 0) {
+      absl::StrAppend(&line, kTruncated);
+    }
+    absl::StrAppend(&line,
+                    absl::CEscape(str.substr(start, mismatch_idx - start)));
+    // Position of mismatch in the line.
+    size_t caret_pos = line.length();
+    // Content from mismatch onwards
+    if (mismatch_idx < str.length()) {
+      absl::StrAppend(
+          &line, absl::CEscape(str.substr(mismatch_idx, end - mismatch_idx)));
+    } else {
+      absl::StrAppend(&line, kEOF);
+    }
+    if (end < str.length()) {
+      absl::StrAppend(&line, kTruncated);
+    }
+    absl::StrAppend(&report, line, "\n");
+    std::string caret_line(caret_pos, ' ');
+    absl::StrAppend(&report, caret_line, "^\n");
+  };
+  append_context(expected, lhs_index, "Expected");
+  append_context(actual, rhs_index, "Actual  ");
+  return report;
 }
 
-bool ApproximateMatch(absl::string_view lhs, absl::string_view rhs) {
+std::pair<size_t, size_t> FindApproximateMismatch(absl::string_view lhs,
+                                                  absl::string_view rhs) {
   size_t lhs_length = lhs.size();
   size_t rhs_length = rhs.size();
   size_t l = 0, r = 0;
@@ -171,73 +197,18 @@ bool ApproximateMatch(absl::string_view lhs, absl::string_view rhs) {
     if (l == lhs_length || r == rhs_length) {
       break;
     }
-    if (lhs[l++] != rhs[r++]) {
-      return false;
+    if (lhs[l] != rhs[r]) {
+      return {l, r};
     }
+    l++;
+    r++;
   }
-  return l == lhs_length && r == rhs_length;
+  return {l, r};
 }
 
-std::optional<int64_t> SafeEvaluateSymbolicExpr(
-    SymbolicExpr expr, absl::Span<int64_t const> dims,
-    absl::Span<int64_t const> syms) {
-  if (!expr) {
-    return std::nullopt;
-  }
-  if (expr.GetType() == SymbolicExprType::kVariable) {
-    int64_t num_dims = dims.size();
-    if (IsSymbol(expr, num_dims)) {
-      int64_t sym_index = GetSymbolIndex(expr, num_dims);
-      if (sym_index < 0 || sym_index >= syms.size()) {
-        return std::nullopt;
-      }
-      return syms[sym_index];
-    }
-    int64_t dim_index = GetDimensionIndex(expr, num_dims);
-    if (dim_index < 0 || dim_index >= dims.size()) {
-      return std::nullopt;
-    }
-    return dims[dim_index];
-  }
-  if (expr.GetType() == SymbolicExprType::kConstant) {
-    return expr.GetValue();
-  }
-  auto lhs = SafeEvaluateSymbolicExpr(expr.GetLHS(), dims, syms);
-  auto rhs = SafeEvaluateSymbolicExpr(expr.GetRHS(), dims, syms);
-  if (!lhs || !rhs) return std::nullopt;
-
-  int64_t result;
-  bool result_division_is_undefined =
-      rhs == 0 || (lhs == std::numeric_limits<int64_t>::min() && rhs == -1);
-  switch (expr.GetType()) {
-    case SymbolicExprType::kAdd:
-      if (llvm::AddOverflow(*lhs, *rhs, result)) {
-        return std::nullopt;
-      }
-      return result;
-    case SymbolicExprType::kMul:
-      if (llvm::MulOverflow(*lhs, *rhs, result)) {
-        return std::nullopt;
-      }
-      return result;
-    case SymbolicExprType::kFloorDiv:
-      return result_division_is_undefined
-                 ? std::nullopt
-                 : std::make_optional(llvm::divideFloorSigned(*lhs, *rhs));
-    case SymbolicExprType::kCeilDiv:
-      return result_division_is_undefined
-                 ? std::nullopt
-                 : std::make_optional(llvm::divideCeilSigned(*lhs, *rhs));
-    case SymbolicExprType::kMod:
-      return *rhs <= 0 ? std::nullopt
-                       : std::make_optional(llvm::mod(*lhs, *rhs));
-    case SymbolicExprType::kMax:
-      return std::make_optional(std::max(*lhs, *rhs));
-    case SymbolicExprType::kMin:
-      return std::make_optional(std::min(*lhs, *rhs));
-    default:
-      LOG(FATAL) << "Unknown binary op: " << static_cast<int>(expr.GetType());
-  }
+bool ApproximateMatch(absl::string_view lhs, absl::string_view rhs) {
+  return FindApproximateMismatch(lhs, rhs) ==
+         std::make_pair(lhs.size(), rhs.size());
 }
 
 absl::Status EnumerateDomain(

@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_RAGGED_ALL_TO_ALL_THUNK_H_
 #define XLA_BACKENDS_GPU_RUNTIME_RAGGED_ALL_TO_ALL_THUNK_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -38,13 +39,13 @@ limitations under the License.
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_handle.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/util/tied_ref.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -68,6 +69,10 @@ struct RaggedAllToAllConfig {
   // If set, the will be used to determine if optimized kernels that assume a
   // fast interconnect can be used.
   std::optional<int64_t> fast_interconnect_slice_size_override = std::nullopt;
+
+  // If true, one-shot kernel will use the Symmetric Memory for
+  // output buffers resulting in zero copy and temporary sym buffer elimination.
+  bool zero_copy_in_one_shot_kernel = false;
 };
 
 // Contains the values that are passed between host threads with rendezvous.
@@ -164,8 +169,6 @@ class RaggedAllToAllThunk : public CollectiveThunk {
     return config_;
   }
 
-  absl::Span<const Buffer> buffers() const { return buffers_; }
-
   bool is_one_shot_kernel_enabled() const {
     return config_.one_shot_kernel_enabled;
   }
@@ -174,26 +177,18 @@ class RaggedAllToAllThunk : public CollectiveThunk {
     return config_.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel;
   }
 
+  bool zero_copy_in_one_shot_kernel() const {
+    return config_.zero_copy_in_one_shot_kernel;
+  }
+
   // Returns true if one shot kernel is supported
   bool IsOneShotKernelSupported() const;
 
   static absl::StatusOr<std::unique_ptr<RaggedAllToAllThunk>> FromProto(
-      ThunkInfo thunk_info, const RaggedAllToAllStartThunkProto& thunk_proto,
+      ThunkInfo thunk_info, const RaggedAllToAllThunkProto& thunk_proto,
       absl::Span<const BufferAllocation> buffer_allocations);
 
   absl::StatusOr<ThunkProto> ToProto() const override;
-
-  BufferUses buffer_uses() const override {
-    BufferUses uses;
-    uses.reserve(buffers_.size() * 2);
-    for (const Buffer& buffer : buffers_) {
-      uses.push_back(BufferUse::Read(buffer.source_buffer.slice,
-                                     buffer.source_buffer.shape));
-      uses.push_back(BufferUse::Write(buffer.destination_buffer.slice,
-                                      buffer.destination_buffer.shape));
-    }
-    return uses;
-  }
 
  protected:
   // No rendezvous needed when using one-shot kernel in local mode instead of
@@ -215,7 +210,6 @@ class RaggedAllToAllThunk : public CollectiveThunk {
   }
 
   const RaggedAllToAllConfig config_;
-  const std::vector<Buffer> buffers_;
 
   mutable absl::Mutex mutex_;
   absl::flat_hash_map<se::StreamExecutor*,
@@ -282,9 +276,9 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
     const GpuCliqueKey& clique_key, se::Stream& stream, RankId rank,
     std::shared_ptr<xla::SymmetricMemory> barrier_signal_symmetric_memory,
     const se::DeviceAddressBase& barrier_signal_value,
-    std::shared_ptr<xla::SymmetricMemory> output_temporary_symmetric_memory,
-    int64_t num_total_updates, int64_t num_input_rows, int64_t num_row_elements,
-    absl::Span<DeviceBufferPair const> buffers);
+    SymmetricMemory* output_sym_mem, size_t output_sym_offset,
+    bool is_zero_copy, int64_t num_total_updates, int64_t num_input_rows,
+    int64_t num_row_elements, absl::Span<DeviceBufferPair const> buffers);
 
 }  // namespace gpu
 }  // namespace xla

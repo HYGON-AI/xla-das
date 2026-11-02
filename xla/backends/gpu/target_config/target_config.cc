@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "google/protobuf/text_format.h"
 #include "xla/backends/gpu/target_config/embed_gpu_specs.h"
 #include "xla/status_macros.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -153,13 +153,16 @@ absl::StatusOr<GpuTargetConfig> GpuTargetConfig::FromProto(
 
 se::GpuTargetConfigProto GpuTargetConfig::ToProto() const {
   se::GpuTargetConfigProto proto;
-  *proto.mutable_gpu_device_info() = device_description.ToGpuProto();
+  *proto.mutable_gpu_device_info() = device_description.ToProto();
   proto.set_platform_name(platform_name);
   *proto.mutable_dnn_version_info() = dnn_version_info.ToProto();
   se::RuntimeVersionProto runtime_version_proto;
-  runtime_version_proto.set_major(device_description.runtime_version().major());
-  runtime_version_proto.set_minor(device_description.runtime_version().minor());
-  runtime_version_proto.set_patch(device_description.runtime_version().patch());
+  runtime_version_proto.set_major(
+      device_description.runtime_version().major_version());
+  runtime_version_proto.set_minor(
+      device_description.runtime_version().minor_version());
+  runtime_version_proto.set_patch(
+      device_description.runtime_version().patch_version());
   *proto.mutable_runtime_version() = runtime_version_proto;
   proto.set_device_description_str(device_description_str);
   return proto;

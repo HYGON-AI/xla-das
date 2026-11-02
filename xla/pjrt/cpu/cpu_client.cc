@@ -78,6 +78,7 @@ limitations under the License.
 #include "xla/pjrt/cpu/tracked_cpu_device_buffer.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/dump/dump.h"
+#include "xla/pjrt/dynamic_shapes.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/host_to_device_transfer_manager.h"
@@ -99,6 +100,7 @@ limitations under the License.
 #include "xla/pjrt/thread_pool_async_work_runner.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/pjrt/utils.h"
+#include "xla/primitive_util.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiler.h"
@@ -301,7 +303,7 @@ PjRtCpuClient::PjRtCpuClient(
   for (int idx = 0; idx < addressable_devices_.size(); ++idx) {
     auto* const device = addressable_devices_[idx];
     CHECK(device != nullptr) << idx;
-    auto* cpu_device = tsl::down_cast<PjRtCpuDevice*>(device);
+    auto* cpu_device = absl::down_cast<PjRtCpuDevice*>(device);
 
     // Use the device id to construct a globally unique memory space id.
     const int id = device->id();
@@ -373,6 +375,10 @@ absl::StatusOr<DeviceAssignment> PjRtCpuClient::GetDefaultDeviceAssignment(
 
 absl::StatusOr<Layout> PjRtCpuClient::GetDefaultLayout(
     PrimitiveType element_type, absl::Span<const int64_t> dims) {
+  if (!primitive_util::IsArrayType(element_type)) {
+    return InvalidArgument("Element type %s does not support layout",
+                           PrimitiveType_Name(element_type));
+  }
   Shape shape = ShapeUtil::MakeShape(element_type, dims);
   return LayoutUtil::GetWithDefaultLayout(shape).layout();
 }
@@ -498,7 +504,7 @@ PjRtCpuClient::LoadSerializedExecutable(absl::string_view serialized,
       &num_replicas, &num_partitions, &device_assignment));
 
   auto cpu_executable_ptr =
-      tsl::down_cast<cpu::CpuExecutable*>(executable.get());
+      absl::down_cast<cpu::CpuExecutable*>(executable.get());
 
   // `result_buffer_indices` has the buffer allocation indices that make up the
   // output buffer (could be tuple).
@@ -633,15 +639,16 @@ absl::StatusOr<std::pair<std::unique_ptr<PjRtCpuExecutable>,
                          std::shared_ptr<DeviceAssignment>>>
 PjRtCpuClient::CompileAndAssignDevices(MaybeOwningMlirModule module,
                                        CompileOptions options) {
-  TF_RETURN_IF_ERROR(
-      pjrt::MaybeDumpCompileInputs(options, module.mlir_module(), *topology_));
-
+  int module_id = HloModule::GetNextUniqueModuleId();
+  TF_RETURN_IF_ERROR(pjrt::MaybeDumpCompileInputs(options, module.mlir_module(),
+                                                  *topology_, module_id));
   XlaComputation xla_computation;
   ExecutableBuildOptions& exec_build_options = options.executable_build_options;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(
       module.mlir_module(), xla_computation,
       /*use_tuple_args=*/options.parameter_is_tupled_arguments,
       /*return_tuple=*/false, &exec_build_options));
+  xla_computation.mutable_proto()->set_pjrt_id(module_id);
 
   if (options.argument_layouts) {
     return CompileAndAssignDevices(xla_computation, options);
@@ -741,7 +748,7 @@ PjRtCpuClient::CompileAndLoad(MaybeOwningMlirModule module,
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> PjRtCpuClient::Load(
     std::shared_ptr<PjRtExecutable> executable,
     const LoadOptions& load_options) {
-  TF_RET_CHECK(tensorflow::down_cast<PjRtCpuExecutable*>(executable.get()));
+  TF_RET_CHECK(absl::down_cast<PjRtCpuExecutable*>(executable.get()));
   auto cpu_executable = std::static_pointer_cast<PjRtCpuExecutable>(executable);
   CompileOptions options = cpu_executable->compile_options();
   int unused_num_replicas;
@@ -897,7 +904,7 @@ PjRtCpuClient::CompileInternal(
   }
 
   auto cpu_executable_ptr =
-      tsl::down_cast<cpu::CpuExecutable*>(cpu_executable.get());
+      absl::down_cast<cpu::CpuExecutable*>(cpu_executable.get());
 
   // `result_buffer_indices` has the buffer allocation indices that make up the
   // output buffer (could be tuple).
@@ -934,8 +941,7 @@ static bool IsAlignedData(void* ptr) {
   return (absl::bit_cast<std::uintptr_t>(ptr) & (cpu::MinAlign() - 1)) == 0;
 }
 
-absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
-PjRtCpuClient::ImportForeignMemory(
+absl::StatusOr<PjRtRawBufferRef> PjRtCpuClient::ImportForeignMemory(
     void* device_ptr, absl::AnyInvocable<void() &&> on_delete_callback,
     size_t on_device_bytes_count, PjRtMemorySpace* memory_space,
     bool is_mutable) {
@@ -951,19 +957,16 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::CreateErrorBuffer(
   if (device->client() != this) {
     return absl::InvalidArgumentError("Device is not attached to this client");
   }
-  // Create a dummy buffer because the rest of the code expects a buffer
-  // regardless of whether the definition event is an error.
-  TF_ASSIGN_OR_RETURN(
-      auto raw_buffer,
-      CpuRawBuffer::Allocate(memory_space, ShapeUtil::ByteSizeOf(shape),
-                             *allocator_));
-  return std::make_unique<CommonPjRtBufferImpl>(
-      std::make_shared<const Shape>(shape),
-      std::make_unique<TrackedCpuDeviceBuffer>(
-          std::move(raw_buffer),
-          tsl::AsyncValueRef<CpuEvent>(
-              tsl::MakeErrorAsyncValueRef(std::move(error)))),
-      memory_space);
+  TF_ASSIGN_OR_RETURN(int64_t size, GetOnDeviceBytesCount(memory_space, shape));
+  TF_ASSIGN_OR_RETURN(auto raw_buffer,
+                      CpuRawBuffer::Allocate(memory_space, size, *allocator_));
+  absl::InlinedVector<PjRtDeviceEventRef, 2> definition_device_events;
+  definition_device_events.push_back(
+      PjRtDeviceEventRef(tsl::AsyncValueRef<CpuEvent>(
+          tsl::MakeErrorAsyncValueRef(std::move(error)))));
+  return DefineBuffer(std::make_shared<const Shape>(shape), memory_space,
+                      std::move(raw_buffer),
+                      std::move(definition_device_events));
 }
 
 absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
@@ -988,9 +991,11 @@ absl::StatusOr<PjRtDeviceEventRef> PjRtCpuClient::LinearizeHostBufferInto(
     std::optional<absl::Span<int64_t const>> byte_strides,
     HostBufferSemantics host_buffer_semantics,
     absl::AnyInvocable<void() &&> on_done_with_host_buffer,
-    const xla::Shape& device_shape,
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) {
-  return tsl::down_cast<CpuRawBuffer*>(raw_buffer.get())
+    const xla::Shape& device_shape, PjRtRawBufferRef raw_buffer) {
+  if (device_shape.IsToken()) {
+    return PjRtDeviceEventRef(tsl::MakeAvailableAsyncValueRef<CpuEvent>());
+  }
+  return absl::down_cast<CpuRawBuffer*>(raw_buffer.get())
       ->CopyFromHostBuffer(
           data, type, dims, byte_strides, host_buffer_semantics,
           std::move(on_done_with_host_buffer), device_shape,
@@ -999,14 +1004,16 @@ absl::StatusOr<PjRtDeviceEventRef> PjRtCpuClient::LinearizeHostBufferInto(
 
 absl::StatusOr<PjRtDeviceEventRef> PjRtCpuClient::LinearizeInto(
     const LiteralSlice& literal, const xla::Shape& device_shape,
-    HostBufferSemantics host_buffer_semantics,
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) {
+    HostBufferSemantics host_buffer_semantics, PjRtRawBufferRef raw_buffer) {
   if (host_buffer_semantics ==
       PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall) {
     return absl::UnimplementedError(
         "ImmutableOnlyDuringCall semantics is not supported on CPU.");
   }
-  return tsl::down_cast<CpuRawBuffer*>(raw_buffer.get())
+  if (device_shape.IsToken()) {
+    return PjRtDeviceEventRef(tsl::MakeAvailableAsyncValueRef<CpuEvent>());
+  }
+  return absl::down_cast<CpuRawBuffer*>(raw_buffer.get())
       ->CopyFromLiteral(literal, device_shape.layout(), async_work_runner());
 }
 
@@ -1049,45 +1056,25 @@ std::unique_ptr<PjRtDeviceEventSet> PjRtCpuClient::CreateDeviceEventSet(
   return std::make_unique<CpuTrackedDeviceEventSet>(preallocated_size);
 }
 
-absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::DefineBuffer(
-    std::shared_ptr<const Shape> on_device_shape, PjRtMemorySpace* memory_space,
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
-    absl::InlinedVector<PjRtDeviceEventRef, 4> definition_device_events) {
-  if (raw_buffer && raw_buffer->memory_space() != memory_space) {
-    return absl::InvalidArgumentError(
-        absl::StrFormat("DefineBuffer: Mismatch in memory spaces: %s vs %s",
-                        raw_buffer->memory_space()->DebugString(),
-                        memory_space->DebugString()));
-  }
-  return std::unique_ptr<PjRtBuffer>(std::make_unique<CommonPjRtBufferImpl>(
-      std::move(on_device_shape),
-      std::make_unique<TrackedCpuDeviceBuffer>(
-          std::move(raw_buffer), AfterAllCpuEvents(definition_device_events)),
-      memory_space));
-}
-
-absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
-PjRtCpuClient::AllocateRawBuffer(PjRtMemorySpace* memory_space,
-                                 size_t on_device_bytes_count,
-                                 bool retry_on_oom,
-                                 tsl::AsyncValueRef<bool> allocate_after) {
+absl::StatusOr<PjRtRawBufferRef> PjRtCpuClient::AllocateRawBuffer(
+    PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
+    bool retry_on_oom, tsl::AsyncValueRef<bool> allocate_after) {
   CHECK(allocate_after == nullptr) << "allocate_after is not supported for "
                                       "PjRtCpuClient.";
   return xla::CpuRawBuffer::Allocate(memory_space, on_device_bytes_count,
                                      *allocator_);
 }
 
-absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
-PjRtCpuClient::AllocateRawBufferForExecute(PjRtMemorySpace* memory_space,
-                                           size_t on_device_bytes_count,
-                                           bool retry_on_oom) {
+absl::StatusOr<PjRtRawBufferRef> PjRtCpuClient::AllocateRawBufferForExecute(
+    PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
+    bool retry_on_oom) {
   return tsl::MakeRef<CpuRawBuffer>(memory_space,
                                     CpuDeviceMemory::CreateDelayedMemory(),
                                     on_device_bytes_count,
                                     /*owns_buffer=*/true);
 }
 
-absl::StatusOr<std::pair<tsl::RCReference<CommonPjRtRawBuffer>,
+absl::StatusOr<std::pair<PjRtRawBufferRef,
                          CommonPjRtClient::PjRtFulfillAliasRawBufferCallback>>
 PjRtCpuClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
                                       size_t on_device_bytes_count) {
@@ -1098,8 +1085,7 @@ PjRtCpuClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
 
   auto buffer_promise_cb =
       [buffer_promise = std::move(buffer_promise), memory_space](
-          absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>> raw_buffer)
-      -> absl::Status {
+          absl::StatusOr<PjRtRawBufferRef> raw_buffer) -> absl::Status {
     if (!raw_buffer.ok()) {
       buffer_promise->SetError(raw_buffer.status());
       return raw_buffer.status();
@@ -1112,10 +1098,9 @@ PjRtCpuClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
       buffer_promise->SetError(status);
       return status;
     }
-    buffer_promise->ForwardTo(
-        tensorflow::down_cast<xla::CpuRawBuffer*>(raw_buffer->get())
-            ->buffer()
-            .CopyRCRef());
+    buffer_promise->ForwardTo(absl::down_cast<CpuRawBuffer*>(raw_buffer->get())
+                                  ->buffer()
+                                  .CopyRCRef());
     return absl::OkStatus();
   };
 
@@ -1124,7 +1109,21 @@ PjRtCpuClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
 
 absl::StatusOr<int64_t> PjRtCpuClient::GetOnDeviceBytesCount(
     int memory_space_kind, const xla::Shape& shape) const {
-  return xla::ShapeUtil::ByteSizeOf(shape);
+  int64_t original_size = xla::ShapeUtil::ByteSizeOf(shape);
+  auto kind = GetDynamicShapeKind(memory_space_kind);
+  auto requirements =
+      PjRtShapeAndMetadataTransferRequirements::Get(shape, kind);
+  if (shape.has_layout()) {
+    return static_cast<int64_t>(requirements.size);
+  }
+  if (static_cast<int64_t>(requirements.size) != original_size) {
+    return absl::InternalError(absl::StrFormat(
+        "%s mismatch between transfer_manager requirements (%ld) and "
+        "PjRtTransferRequirements (%zu)",
+        shape.ToString(true), original_size, requirements.size));
+  }
+
+  return static_cast<int64_t>(requirements.size);
 }
 
 absl::StatusOr<xla::Shape> PjRtCpuClient::MakeDefaultShapeForMemorySpace(
@@ -1171,7 +1170,7 @@ PjRtCpuExecutable::PjRtCpuExecutable(
       parameter_is_tupled_arguments_(parameter_is_tupled_arguments),
       compile_options_(std::move(compile_options)),
       cpu_executable_(
-          tsl::down_cast<cpu::CpuExecutable*>(cpu_executable.release())),
+          absl::down_cast<cpu::CpuExecutable*>(cpu_executable.release())),
       parameter_device_shapes_(GetParameterShapes(
           cpu_executable_->module().entry_computation_layout())),
       result_buffer_indices_(std::move(result_buffer_indices)),
@@ -1208,15 +1207,21 @@ PjRtCpuExecutable::PjRtCpuExecutable(
     input_buffer_sizes_in_bytes_.reserve(computation_layout.parameter_count());
     for (int i = 0; i < computation_layout.parameter_count(); ++i) {
       input_buffer_sizes_in_bytes_.push_back(
-          ShapeUtil::ByteSizeOf(computation_layout.parameter_shape(i)));
+          PjRtShapeAndMetadataTransferRequirements::Get(
+              computation_layout.parameter_shape(i),
+              PjRtDynamicShapeKind::kNotSupported)
+              .size);
     }
   } else {
     input_buffer_sizes_in_bytes_.reserve(
         computation_layout.parameter_shape(0).tuple_shapes().size());
     for (int i = 0;
          i < computation_layout.parameter_shape(0).tuple_shapes().size(); ++i) {
-      input_buffer_sizes_in_bytes_.push_back(ShapeUtil::ByteSizeOf(
-          computation_layout.parameter_shape(0).tuple_shapes(i)));
+      input_buffer_sizes_in_bytes_.push_back(
+          PjRtShapeAndMetadataTransferRequirements::Get(
+              computation_layout.parameter_shape(0).tuple_shapes(i),
+              PjRtDynamicShapeKind::kNotSupported)
+              .size);
     }
   }
 
@@ -1313,14 +1318,13 @@ struct BufferAllocAndCopy {
 static absl::StatusOr<tsl::AsyncValueRef<CpuDeviceMemory>> MemoryForAllocation(
     const BufferAllocation& allocation,
     absl::Span<const cpu::ConstantAllocation> constants,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> input_buffers,
-    BufferAlloc& buffer_alloc, BufferAllocAndCopy& buffer_alloc_and_copy,
+    absl::Span<const PjRtRawBufferRef> input_buffers, BufferAlloc& buffer_alloc,
+    BufferAllocAndCopy& buffer_alloc_and_copy,
     const tsl::AsyncValueRef<CpuDeviceMemory>& tuple_index_table,
-    const tsl::RCReference<CommonPjRtRawBuffer>& allocated_output) {
+    const PjRtRawBufferRef& allocated_output) {
   auto buffer_or_default = [&]() -> tsl::AsyncValueRef<CpuDeviceMemory> {
     if (allocated_output) {
-      return tensorflow::down_cast<CpuRawBuffer*>(allocated_output.get())
-          ->buffer();
+      return absl::down_cast<CpuRawBuffer*>(allocated_output.get())->buffer();
     }
     return CpuDeviceMemory::CreateDelayedMemory();
   };
@@ -1330,7 +1334,7 @@ static absl::StatusOr<tsl::AsyncValueRef<CpuDeviceMemory>> MemoryForAllocation(
       if (allocation.param_shape_index().empty()) {
         return tuple_index_table;
       } else if (allocation.param_shape_index().size() == 1) {
-        arg = tensorflow::down_cast<CpuRawBuffer*>(
+        arg = absl::down_cast<CpuRawBuffer*>(
             input_buffers[allocation.param_shape_index()[0]].get());
       } else {
         return absl::InvalidArgumentError(absl::StrCat(
@@ -1344,20 +1348,19 @@ static absl::StatusOr<tsl::AsyncValueRef<CpuDeviceMemory>> MemoryForAllocation(
           allocation.parameter_number(),
           " at shape index:", allocation.param_shape_index().ToString()));
     } else {
-      arg = tensorflow::down_cast<CpuRawBuffer*>(
+      arg = absl::down_cast<CpuRawBuffer*>(
           input_buffers[allocation.parameter_number()].get());
     }
     if (allocated_output) {
       if (arg != allocated_output.get()) {
-        auto copy = tensorflow::down_cast<CpuRawBuffer*>(allocated_output.get())
-                        ->buffer();
+        auto copy =
+            absl::down_cast<CpuRawBuffer*>(allocated_output.get())->buffer();
         buffer_alloc_and_copy.src_buffers.push_back(arg->buffer());
         buffer_alloc_and_copy.dst_buffers.push_back(copy);
         buffer_alloc_and_copy.allocation_sizes.push_back(allocation.size());
         return copy;
       }
-      return tensorflow::down_cast<CpuRawBuffer*>(allocated_output.get())
-          ->buffer();
+      return absl::down_cast<CpuRawBuffer*>(allocated_output.get())->buffer();
     }
     return arg->buffer();
   } else if (allocation.is_constant() &&
@@ -1380,18 +1383,17 @@ static absl::StatusOr<tsl::AsyncValueRef<CpuDeviceMemory>> MemoryForAllocation(
 }
 
 static absl::StatusOr<std::vector<tsl::AsyncValueRef<CpuDeviceMemory>>>
-CreateBufferTable(
-    const BufferAssignment& assignment,
-    absl::Span<const cpu::ConstantAllocation> constants,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> input_buffers,
-    BufferAlloc& buffer_alloc, BufferAllocAndCopy& buffer_alloc_and_copy,
-    const tsl::AsyncValueRef<CpuDeviceMemory>& tuple_index_table,
-    const absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>>
-        output_buffers,
-    absl::Span<const int64_t> output_indices) {
+CreateBufferTable(const BufferAssignment& assignment,
+                  absl::Span<const cpu::ConstantAllocation> constants,
+                  absl::Span<const PjRtRawBufferRef> input_buffers,
+                  BufferAlloc& buffer_alloc,
+                  BufferAllocAndCopy& buffer_alloc_and_copy,
+                  const tsl::AsyncValueRef<CpuDeviceMemory>& tuple_index_table,
+                  const absl::Span<const PjRtRawBufferRef> output_buffers,
+                  absl::Span<const int64_t> output_indices) {
   std::vector<tsl::AsyncValueRef<CpuDeviceMemory>> buffer_table(
       assignment.Allocations().size());
-  tsl::RCReference<CommonPjRtRawBuffer> null_output;
+  PjRtRawBufferRef null_output;
   for (BufferAllocation::Index i = 0; i < buffer_table.size(); ++i) {
     const BufferAllocation& allocation = assignment.GetAllocation(i);
     int64_t out_index = output_indices[i];
@@ -1406,30 +1408,6 @@ CreateBufferTable(
   return std::move(buffer_table);
 }
 
-absl::Status PjRtCpuLoadedExecutable::CheckBufferCompatibilities(
-    absl::Span<const CommonPjRtBuffer::ScopedHold> input_buffers,
-    absl::Span<PjRtBuffer* const> argument_handles) const {
-  if (input_buffers.size() !=
-      executable_->input_buffer_sizes_in_bytes_.size()) {
-    return InvalidArgument(
-        "Execution supplied %lld buffers but compiled program expected %lld "
-        "buffers",
-        input_buffers.size(), executable_->input_buffer_sizes_in_bytes_.size());
-  }
-  for (int i = 0; i < input_buffers.size(); ++i) {
-    auto* buffer = tensorflow::down_cast<TrackedCpuDeviceBuffer*>(
-        input_buffers[i].buffer());
-    if (executable_->input_buffer_sizes_in_bytes_[i] != buffer->BufferSize()) {
-      return InvalidArgument(
-          "Executable expected parameter %d of size %lld but got buffer with "
-          "incompatible size %lld",
-          i, executable_->input_buffer_sizes_in_bytes_[i],
-          buffer->BufferSize());
-    }
-  }
-  return absl::OkStatus();
-}
-
 absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>>
 PjRtCpuLoadedExecutable::LoadRawExecutable(
     const ExecuteOptions& options, size_t host_callback_idx, xla::RunId run_id,
@@ -1439,7 +1417,7 @@ PjRtCpuLoadedExecutable::LoadRawExecutable(
   result->client_ = client_;
   result->num_addressable_devices_ = addressable_devices_.size();
   result->device_assignment_ = std::move(device_and_assign.device_assignment);
-  result->device_ = tsl::down_cast<PjRtCpuDevice*>(device_and_assign.device);
+  result->device_ = absl::down_cast<PjRtCpuDevice*>(device_and_assign.device);
   return result;
 }
 
@@ -1474,8 +1452,8 @@ tsl::AsyncValueRef<CpuEvent> PjRtCpuClient::GetCollectiveLaunchEvent(
 
 PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     const ExecuteOptions& options,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> input_buffers,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> output_leaf_buffers,
+    absl::Span<const PjRtRawBufferRef> input_buffers,
+    absl::Span<const PjRtRawBufferRef> output_leaf_buffers,
     std::unique_ptr<PjRtDeviceEventSet> extra_deps,
     std::unique_ptr<PjRtDeviceEventSet> control_deps,
     bool is_predetermined_error, bool fill_future) && {
@@ -1491,11 +1469,10 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
       tsl::MakeConstructedAsyncValueRef<CpuEvent>();
 
   auto& input_deps =
-      *tensorflow::down_cast<CpuTrackedDeviceEventSet*>(control_deps.get());
+      *absl::down_cast<CpuTrackedDeviceEventSet*>(control_deps.get());
   size_t num_control_deps = input_deps.events().size();
   for (auto& event :
-       std::move(
-           *tensorflow::down_cast<CpuTrackedDeviceEventSet*>(extra_deps.get()))
+       std::move(*absl::down_cast<CpuTrackedDeviceEventSet*>(extra_deps.get()))
            .Consume()) {
     input_deps.AddEvent(std::move(event));
   }
@@ -1515,7 +1492,7 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     leaf_buffers.reserve(input_buffers.size());
     for (const auto& buffer : input_buffers) {
       leaf_buffers.push_back(
-          tensorflow::down_cast<CpuRawBuffer*>(buffer.get())->buffer());
+          absl::down_cast<CpuRawBuffer*>(buffer.get())->buffer());
     }
     tuple_index_table = CpuDeviceMemory::CreateDelayedMemory();
     tsl::RunWhenReady(

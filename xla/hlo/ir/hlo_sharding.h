@@ -541,6 +541,7 @@ class HloSharding {
     }
     return *this == V3ToV2Sharding(*other.named_sharding_);
   }
+
   bool operator!=(const HloSharding& other) const { return !(*this == other); }
 
   template <typename H>
@@ -609,7 +610,10 @@ class HloSharding {
 
   // Gets the tile assignment tensor.
   // REQUIRES: !IsReplicated() && !IsTuple()
-  const TileAssignment& tile_assignment() const { return tile_assignment_; }
+  const TileAssignment& tile_assignment() const {
+    CHECK(!IsTuple());
+    return tile_assignment_;
+  }
 
   // Returns the flattened list of devices used in the tile assignment.
   // REQUIRES: !IsReplicated() && !IsTuple()
@@ -689,12 +693,22 @@ class HloSharding {
   // argument
   int64_t NumTiles(absl::Span<const int64_t> dims) const;
 
+  // Returns the replication factor of the sharding, i.e., the product
+  // of the replicated dimensions.
+  //
+  // For HloShardingV3 this is the same as the number of devices divided by the
+  // product of the sharded dimensions.
+  int64_t ReplicationFactor() const;
+
   // Gets metadata from sharding.
   std::vector<OpMetadata>& metadata() { return metadata_; }
   const std::vector<OpMetadata>& metadata() const { return metadata_; }
 
   // Returns the replication subgroup dim, or -1 if it doesn't exist.
   int64_t SubgroupReplicationDim() const {
+    CHECK(!UseNamedShardingLeaf())
+        << "SubgroupReplicationDim should not be called for HloShardingV3 as "
+           "all relevant use cases are handled separately.";
     auto it = absl::c_find(subgroup_types_, OpSharding::REPLICATED);
     if (it != subgroup_types_.end()) {
       return (it - subgroup_types_.begin()) + TiledDataRank();

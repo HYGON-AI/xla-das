@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/client/local_client.h"
 #include "xla/layout.h"
 #include "xla/pjrt/compiled_memory_stats.h"
@@ -49,7 +50,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 
@@ -175,29 +175,7 @@ StreamExecutorExecutable::GetCompiledMemoryStats() const {
           "Retrieving CompiledMemoryStats is not supported for multiple "
           "executables.");
     }
-    const auto& aot_executable = (*aot_executables)[0];
-    TF_ASSIGN_OR_RETURN(std::unique_ptr<BufferAssignment> buffers,
-                        aot_executable->buffer_assignment());
-
-    BufferAssignmentProto proto = buffers->ToProto();
-    memory_stats.serialized_buffer_assignment = proto.SerializeAsString();
-    std::vector<const BufferAllocation*> alloc_ptrs;
-    alloc_ptrs.reserve(buffers->Allocations().size());
-    for (const BufferAllocation& alloc : buffers->Allocations()) {
-      alloc_ptrs.push_back(&alloc);
-    }
-    memory_stats.PopulateBufferStatsFromAllocations(alloc_ptrs);
-    HloModuleProto hlo_module_proto =
-        aot_executable->shared_optimized_module()->ToProto();
-    TF_ASSIGN_OR_RETURN(auto peak_memories,
-                        ComputePeakMemorySizes(proto, hlo_module_proto));
-    memory_stats.peak_memory_in_bytes = peak_memories.padded;
-    memory_stats.peak_unpadded_heap_bytes = peak_memories.unpadded;
-    memory_stats.total_allocation_bytes =
-        ComputeTotalAllocationBytes(proto, /*memory_color=*/0);
-    memory_stats.indefinite_allocations =
-        ComputeIndefiniteAllocationsInBytes(proto, /*memory_color=*/0);
-    return memory_stats;
+    return (*aot_executables)[0]->GetCompiledMemoryStats();
   }
 
   const auto& local_executables =

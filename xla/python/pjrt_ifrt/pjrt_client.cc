@@ -28,6 +28,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
@@ -49,6 +50,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.h"
+#include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/coordination/coordination_service_agent.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/distributed/topology_util.h"
@@ -363,7 +365,10 @@ absl::StatusOr<GlobalTopology> MakeGlobalTopologyFromPjRtClient(
       device.set_device_kind(
           // OSS requires explicit string conversion
           // NOLINTNEXTLINE(*-redundant-string-conversions)
-          std::string(pjrt_client->addressable_devices()[0]->device_kind()));
+          std::string(
+              pjrt_device != nullptr
+                  ? pjrt_device->device_kind()
+                  : pjrt_client->addressable_devices()[0]->device_kind()));
 
       // TODO(hyeontaek): Take optional device->partition_index mapping in
       // GlobalDeviceMapping and generate the `partition_index` attribute for
@@ -856,7 +861,7 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> PjRtClient::Create(
   }
 
   for (Device* ifrt_device : client->addressable_devices_) {
-    auto* device = tensorflow::down_cast<PjRtDevice*>(ifrt_device);
+    auto* device = absl::down_cast<PjRtDevice*>(ifrt_device);
     auto* pjrt_device = device->pjrt_device();
     device->memories_.reserve(pjrt_device->memory_spaces().size());
     for (xla::PjRtMemorySpace* pjrt_memory_space :
@@ -1118,14 +1123,14 @@ absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostBuffer(
                           }));
       }
       TF_ASSIGN_OR_RETURN(
-          buffer, pjrt_client_->BufferFromHostBuffer(
-                      data, primitive_type, shape.dims(), byte_strides,
-                      semantics, on_done_with_host_buffer_per_device,
-                      tensorflow::down_cast<PjRtMemory*>(memory)->pjrt_memory(),
-                      xla_layout));
+          buffer,
+          pjrt_client_->BufferFromHostBuffer(
+              data, primitive_type, shape.dims(), byte_strides, semantics,
+              on_done_with_host_buffer_per_device,
+              absl::down_cast<PjRtMemory*>(memory)->pjrt_memory(), xla_layout));
     } else {
       TF_ASSIGN_OR_RETURN(xla::PjRtMemorySpace * memory_space,
-                          tensorflow::down_cast<PjRtDevice*>(device)
+                          absl::down_cast<PjRtDevice*>(device)
                               ->pjrt_device()
                               ->default_memory_space());
       TF_ASSIGN_OR_RETURN(
@@ -1170,8 +1175,12 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::MakeErrorArrays(
         array_spec.sharding->devices()->AddressableDeviceList()->devices();
     TF_ASSIGN_OR_RETURN(Shape shard_shape,
                         array_spec.sharding->GetShardShape(array_spec.shape));
-    xla::Shape xla_shape =
-        xla::ShapeUtil::MakeShape(primitive_type, shard_shape.dims());
+    xla::Shape xla_shape;
+    if (primitive_type == xla::TOKEN) {
+      xla_shape = xla::ShapeUtil::MakeTokenShape();
+    } else {
+      xla_shape = xla::ShapeUtil::MakeShape(primitive_type, shard_shape.dims());
+    }
 
     PjRtArray::PjRtBuffers buffers;
     buffers.reserve(ifrt_addressable_devices.size());
@@ -1199,7 +1208,7 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::MakeErrorArrays(
           buffers.emplace_back(),
           pjrt_client_->CreateErrorBuffer(
               error, xla_shape,
-              tensorflow::down_cast<PjRtMemory*>(memory)->pjrt_memory()));
+              absl::down_cast<PjRtMemory*>(memory)->pjrt_memory()));
     }
     TF_ASSIGN_OR_RETURN(
         arrays.emplace_back(),

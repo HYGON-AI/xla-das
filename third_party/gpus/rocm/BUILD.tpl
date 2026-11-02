@@ -116,19 +116,19 @@ cc_library(
     name = "rocm_rpath",
     linkopts = select({
         ":build_hermetic": [
-            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib",
-            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib64",
+            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib64",
         ],
         ":link_only": [
         ],
         ":multiple_rocm_paths": [
-            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib",
-            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib64",
+            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib64",
             "-Wl,-rpath=%{rocm_lib_paths}",
         ],
         "//conditions:default": [
-            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib",
-            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib64",
+            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib64",
             "-Wl,-rpath,/opt/rocm/lib",
         ],
     }),
@@ -293,18 +293,30 @@ rocm_lib_import(
     interface_library = "%{rocm_root}/lib/librccl.so",
     deps = [
         ":hip_runtime_libs",
+        ":amdsmi_libs",
         ":rocm_smi_libs",
         ":rocprofiler_register_libs",
         ":roctx_libs",
     ],
 )
 
-cc_library(
-    name = "rocm_smi_libs",
-    data = glob([
-        "%{rocm_root}/lib/librocm_smi64.so*",
-        "%{rocm_root}/lib/libamd_smi.so*",
-    ]),
+# Both SMI libraries are exposed here; consumers pick one. They must not be
+# mixed in a single process, see the :smi alias in
+# xla/stream_executor/rocm/BUILD.
+rocm_lib_import(
+    name = "amdsmi",
+    data = glob(["%{rocm_root}/lib/libamd_smi.so*"]),
+    interface_library = "%{rocm_root}/lib/libamd_smi.so",
+    deps = [
+        ":system_libs",
+    ],
+)
+
+rocm_lib_import(
+    name = "rocm_smi",
+    data = glob(["%{rocm_root}/lib/librocm_smi64.so*"]),
+    interface_library = "%{rocm_root}/lib/librocm_smi64.so",
+    deps = [],
 )
 
 bzl_library(

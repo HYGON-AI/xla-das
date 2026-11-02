@@ -66,6 +66,7 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/pjrt/device_event.h"
@@ -130,6 +131,9 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::absl_testing::StatusIs;
+using ::testing::_;
+using ::testing::Contains;
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Eq;
@@ -137,6 +141,7 @@ using ::testing::FloatEq;
 using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::HasSubstr;
+using ::testing::Pair;
 using ::testing::SizeIs;
 
 absl::StatusOr<std::unique_ptr<xla::PjRtLoadedExecutable>> CompileExecutable(
@@ -318,6 +323,22 @@ TEST(StreamExecutorGpuClientTest, CreateErrorBuffer) {
   }
 }
 
+TEST(StreamExecutorGpuClientTest, CreateErrorBufferToken) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+
+  xla::Shape shape = ShapeUtil::MakeTokenShape();
+  for (PjRtMemorySpace* memory_space : client->memory_spaces()) {
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto buffer,
+        client->CreateErrorBuffer(Internal("foobar"), shape, memory_space));
+    EXPECT_THAT(
+        buffer->ToLiteral().Await(),
+        absl_testing::StatusIs(tsl::error::INTERNAL, HasSubstr("foobar")));
+    EXPECT_EQ(buffer->memory_space(), memory_space);
+  }
+}
+
 TEST(StreamExecutorGpuClientTest, PropagateError) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(DefaultOptions()));
@@ -352,7 +373,8 @@ ENTRY %Add.6 (a.1: f32[], b.2: f32[]) -> (f32[], f32[]) {
   ASSERT_EQ(result.size(), 1);
   ASSERT_EQ(result[0].size(), 2);
   for (const auto& b : result[0]) {
-    EXPECT_EQ(b->GetReadyFuture().Await(), input_error);
+    EXPECT_THAT(b->GetReadyFuture().Await(),
+                StatusIs(input_error.code(), HasSubstr(input_error.message())));
   }
 }
 
@@ -398,7 +420,8 @@ ENTRY %Add.6 (a.1: f32[], b.2: f32[]) -> (f32[], f32[]) {
   TF_ASSERT_OK_AND_ASSIGN(another_buffer,
                           another_buffer->DonateWithControlDependency(
                               result[0][0]->GetReadyFuture()));
-  EXPECT_EQ(another_buffer->GetReadyFuture().Await(), input_error);
+  EXPECT_THAT(another_buffer->GetReadyFuture().Await(),
+              StatusIs(input_error.code(), HasSubstr(input_error.message())));
 }
 
 TEST(StreamExecutorGpuClientTest, SendRecvChunked) {
@@ -779,6 +802,27 @@ TEST(StreamExecutorGpuClientTest, ToLiteralAsyncToken) {
   buffer.reset();
 
   n.WaitForNotification();
+}
+
+TEST(StreamExecutorGpuClientTest, AsyncTransferToken) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 1);
+
+  xla::Shape shape = ShapeUtil::MakeTokenShape();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto transfer_manager,
+      client->CreateBuffersForAsyncHostToDevice(
+          {shape}, client->addressable_devices()[0]->memory_spaces()[0]));
+  auto buffer = transfer_manager->RetrieveBuffer(0);
+  auto ready_future = buffer->GetReadyFuture();
+  EXPECT_FALSE(ready_future.IsReady());
+
+  TF_ASSERT_OK(transfer_manager->TransferRawDataToBuffer(0, absl::string_view(),
+                                                         []() {}));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, buffer->ToLiteral().Await());
+  EXPECT_TRUE(literal->shape().IsToken());
 }
 
 TEST(StreamExecutorGpuClientTest, ToLiteralAsyncBeforeBufferReady) {
@@ -1216,6 +1260,48 @@ TEST(StreamExecutorGpuClientTest, CopyErrorBufferToDevice) {
       absl_testing::StatusIs(tsl::error::INTERNAL, HasSubstr("some error")));
 }
 
+TEST(StreamExecutorGpuClientTest, CopyTokenToDevice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 2);
+
+  auto* d0 = client->addressable_devices()[0];
+  auto* d1 = client->addressable_devices()[1];
+
+  xla::Literal literal = xla::LiteralUtil::CreateToken();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto src_buffer,
+      client->BufferFromHostLiteral(literal, *d0->default_memory_space()));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto dst_buffer, src_buffer->CopyToMemorySpace(
+                                               *d1->default_memory_space()));
+
+  xla::Literal received_literal = xla::LiteralUtil::CreateToken();
+  TF_ASSERT_OK(dst_buffer->ToLiteral(&received_literal).Await());
+  EXPECT_TRUE(received_literal.shape().IsToken());
+}
+
+TEST(StreamExecutorGpuClientTest, CopyErrorTokenToDevice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 2);
+
+  auto* d0 = client->addressable_devices()[0];
+  auto* d1 = client->addressable_devices()[1];
+
+  xla::Shape shape = ShapeUtil::MakeTokenShape();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto src_buffer,
+      client->CreateErrorBuffer(absl::InternalError("token error"), shape,
+                                *d0->default_memory_space()));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto dst_buffer, src_buffer->CopyToMemorySpace(
+                                               *d1->default_memory_space()));
+
+  EXPECT_THAT(dst_buffer->ToLiteral().Await(),
+              StatusIs(absl::StatusCode::kInternal, HasSubstr("token error")));
+}
+
 TEST(StreamExecutorGpuClientTest, CopyDelayedErrorBufferToDevice) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(DefaultOptions()));
@@ -1435,16 +1521,33 @@ TEST(StreamExecutorGpuClientTest, GetTopologyDescriptionWithGlobalDevicesTest) {
 TEST(PjRtCpuClientTest, CopyToMemorySpace) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(DefaultOptions()));
+  xla::Shape shape = xla::ShapeUtil::MakeShape(S32, {128, 256});
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, xla::MakeFakeLiteral(shape));
   for (auto* memory_space : client->memory_spaces()) {
-    xla::Shape shape = xla::ShapeUtil::MakeShape(S32, {128, 256});
-    TF_ASSERT_OK_AND_ASSIGN(auto literal, xla::MakeFakeLiteral(shape));
     TF_ASSERT_OK_AND_ASSIGN(
         auto buffer, client->BufferFromHostLiteral(literal, memory_space));
     TF_ASSERT_OK_AND_ASSIGN(buffer,
                             buffer->CopyToMemorySpace(buffer->memory_space()));
     TF_ASSERT_OK_AND_ASSIGN(auto received_literal, buffer->ToLiteral().Await());
-    EXPECT_THAT(received_literal->data<int32_t>(),
-                ElementsAreArray(literal.data<int32_t>()));
+    EXPECT_EQ(*received_literal, literal);
+  }
+}
+
+TEST(PjRtCpuClientTest, CopyToMemorySpaceWithCustomLayout) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+  xla::Shape shape = xla::ShapeUtil::MakeShape(S32, {128, 256});
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, xla::MakeFakeLiteral(shape));
+  Layout device_layout = LayoutUtil::MakeAscendingLayout(2);
+  for (auto* memory_space : client->memory_spaces()) {
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto buffer,
+        client->BufferFromHostLiteral(literal, memory_space, &device_layout));
+    TF_ASSERT_OK_AND_ASSIGN(buffer,
+                            buffer->CopyToMemorySpace(buffer->memory_space()));
+    EXPECT_EQ(buffer->layout()->xla_layout(), device_layout);
+    TF_ASSERT_OK_AND_ASSIGN(auto received_literal, buffer->ToLiteral().Await());
+    EXPECT_EQ(*received_literal, literal);
   }
 }
 
@@ -2022,7 +2125,7 @@ TEST(StreamExecutorGpuClientTest,
   if (client->platform_name() == xla::RocmName()) {
     EXPECT_EQ(memory_stats.peak_memory_in_bytes, 1845006788);
   } else {
-    EXPECT_EQ(memory_stats.peak_memory_in_bytes, 1845010888);
+    EXPECT_EQ(memory_stats.peak_memory_in_bytes, 2165875144);
   }
 }
 
@@ -2061,7 +2164,7 @@ ROOT tuple = (f32[16]{0}, f32[2]{0}, f32[2]{0}) tuple(ag, p0, add0)
 
   EXPECT_EQ(memory_stats.output_size_in_bytes, 104);
   EXPECT_EQ(memory_stats.host_output_size_in_bytes, 0);
-  EXPECT_EQ(memory_stats.peak_memory_in_bytes, 120);
+  EXPECT_EQ(memory_stats.peak_memory_in_bytes, 184);
 }
 
 TEST(StreamExecutorGpuClientTest, GetCompiledMemoryStatsMixedTupleNotRoot) {
@@ -2093,7 +2196,7 @@ ROOT gte0 = f32[16]{0} get-tuple-element(t), index=0
 
   EXPECT_EQ(memory_stats.output_size_in_bytes, 64);
   EXPECT_EQ(memory_stats.host_output_size_in_bytes, 0);
-  EXPECT_EQ(memory_stats.peak_memory_in_bytes, 80);
+  EXPECT_EQ(memory_stats.peak_memory_in_bytes, 144);
 }
 
 TEST(StreamExecutorGpuClientTest, GetCompiledMemoryStatsCountTupleTable) {
@@ -2179,7 +2282,8 @@ TEST(StreamExecutorGpuClientTest,
   TF_ASSERT_OK(result_buffers[0]->GetReadyFuture().Await());
   Shape result_shape = result_buffers[0]->on_device_shape();
   auto memory_space = result_shape.layout().memory_space();
-  EXPECT_EQ(memory_space, 1);
+  // Entry results should be copied from S1 to S0 memory space.
+  EXPECT_EQ(memory_space, 0);
 }
 
 TEST(StreamExecutorGpuClientTest, CollectiveMemorySpaceSmoke) {
@@ -2212,9 +2316,9 @@ TEST(StreamExecutorGpuClientTest, CollectiveMemorySpaceSmoke) {
   auto& buf = results[0][0];
   TF_ASSERT_OK(buf->GetReadyFuture().Await());
 
-  // Override default memory space to collective memory space.
+  // Entry results should be copied from S1 to S0 memory space.
   EXPECT_EQ(buf->on_device_shape().layout().memory_space(),
-            (int)gpu::MemorySpaceColor::kCollective);
+            (int)gpu::MemorySpaceColor::kDefault);
 }
 
 TEST(StreamExecutorGpuClientTest,
@@ -3240,6 +3344,24 @@ ENTRY %Add.6 (a.1: f32[], b.2: f32[]) -> (f32[], f32[]) {
       std::unique_ptr<PjRtRuntimeAbiVersion> runtime_abi_version,
       client->RuntimeAbiVersion());
   EXPECT_OK(runtime_abi_version->IsCompatibleWith(*executable_abi_version));
+}
+
+TEST(StreamExecutorGpuClientTest,
+     TopologyDescriptionHasTargetConfigAndHostTargetMachineOptions) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetStreamExecutorGpuClient(DefaultOptions()));
+  ASSERT_OK_AND_ASSIGN(const PjRtTopologyDescription* topology,
+                       client->GetTopologyDescription());
+  EXPECT_THAT(topology->Attributes(), Contains(Pair("target_config", _)));
+  EXPECT_THAT(topology->Attributes(),
+              Contains(Pair("host_target_machine_options", _)));
+
+  auto se_topology =
+      dynamic_cast<const StreamExecutorGpuTopologyDescription*>(topology);
+  ASSERT_NE(se_topology, nullptr);
+  EXPECT_TRUE(se_topology->gpu_topology().has_gpu_target_config());
+  EXPECT_TRUE(
+      se_topology->gpu_topology().host_target_machine_options().has_value());
 }
 
 static std::string SuccessfulCrossHostTransferTestName(

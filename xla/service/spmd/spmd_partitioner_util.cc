@@ -161,8 +161,8 @@ ConvolutionDimensionNumbers GenNewConvDNums(
     const HloInstruction* dot_rhs, int64_t lhs_concat_dim,
     int64_t rhs_concat_dim, bool windowed_at_contracting_dims,
     bool windowed_at_batch_dims,
-    const std::vector<int64_t>& lhs_to_output_indices,
-    const std::vector<int64_t>& rhs_to_output_indices,
+    absl::Span<const int64_t> lhs_to_output_indices,
+    absl::Span<const int64_t> rhs_to_output_indices,
     const Shape& new_dot_shape) {
   // Generate the new conv dimension numbers.
   const ConvolutionDimensionNumbers& dnums =
@@ -2342,11 +2342,14 @@ GetReshardAllToAllSourceTargetDims(const HloSharding& source,
 
 bool CanReshardWithCollectivePermute(const HloSharding& source_input,
                                      const HloSharding& target_input) {
+  if (source_input.IsReplicatedOrSingleDevice() ||
+      target_input.IsReplicatedOrSingleDevice()) {
+    return false;
+  }
   if (source_input.UseNamedShardingLeaf() &&
       target_input.UseNamedShardingLeaf()) {
     return source_input.dimensions() == target_input.dimensions() &&
-           source_input.named_sharding().dim_shardings() !=
-               target_input.named_sharding().dim_shardings();
+           source_input.named_sharding() != target_input.named_sharding();
   }
 
   HloSharding source =
@@ -2787,6 +2790,27 @@ const HloInstruction* SkipCopyOperands(const HloInstruction* operand,
 
 }  // namespace
 
+// Tries to translate a V2 sharding with non-trivial transpose to a V3 sharding
+// with iota tiling by using reshape_dims as axes sizes and mapping tensor
+HloSharding CanonicalizeSharding(const HloSharding& sharding) {
+  if (sharding.IsTuple()) {
+    std::vector<HloSharding> v3_elements;
+    v3_elements.reserve(sharding.tuple_elements().size());
+    for (const HloSharding& element : sharding.tuple_elements()) {
+      v3_elements.push_back(CanonicalizeSharding(element));
+    }
+    return HloSharding::FlatTuple(std::move(v3_elements));
+  }
+
+  if (sharding.IsUnknown() || sharding.IsManual() || sharding.IsUnreduced()) {
+    return sharding;
+  }
+
+  // HloSharding::ToNamedSharding now handles translation of V1/V2 shardings
+  // to iota mesh based V3 shardings where possible.
+  return HloSharding(HloSharding::ToNamedSharding(sharding));
+}
+
 std::optional<int64_t> FindRotateRightPattern(const HloInstruction* concat) {
   if (concat->operand_count() != 2) {
     return std::nullopt;
@@ -2987,8 +3011,6 @@ std::optional<Mesh> GetMeshFromSharding(const HloSharding& sharding) {
   }
 
   // For V2 shardings, create the mesh from the tile assignment.
-  // TODO(b/477733507): Translate the sharding and tiling to a mesh with iota
-  // device assignment when possible.
   if (sharding.tile_assignment().iota().has_value()) {
     TileAssignment device_assignment = sharding.tile_assignment();
     std::vector<std::string> axis_names(device_assignment.dimensions().size());
@@ -3128,17 +3150,22 @@ GetMeshAxesPartitionGroupsForReplication(
       axis_refs.push_back(AxisRef(dim));
     }
   }
+  if (axis_refs.empty()) {
+    return std::nullopt;
+  }
   SortAndMergeAxes(axis_refs, *mesh);
   return MeshAxesReplicaGroupList(*mesh, axis_refs);
 }
 
 std::unique_ptr<CollectiveDeviceListBase> GetPartitionGroupsForReplication(
-    const HloSharding& sharding, absl::Span<const int64_t> replication_dims) {
+    const HloSharding& sharding, absl::Span<const int64_t> replication_dims,
+    bool enable_rgv3) {
   std::unique_ptr<CollectiveDeviceListBase> partition_groups;
-  auto mesh_axes_groups =
-      GetMeshAxesPartitionGroupsForReplication(sharding, replication_dims);
-  if (mesh_axes_groups.has_value()) {
-    return std::make_unique<MeshAxesReplicaGroupList>(*mesh_axes_groups);
+  if (enable_rgv3) {
+    if (auto mesh_axes_groups = GetMeshAxesPartitionGroupsForReplication(
+            sharding, replication_dims)) {
+      return std::make_unique<MeshAxesReplicaGroupList>(*mesh_axes_groups);
+    }
   }
 
   auto iota_groups =
@@ -3359,11 +3386,13 @@ GetMeshAxesPartitionGroupsAcrossTargetDims(
 
 std::unique_ptr<CollectiveDeviceListBase> GetPartitionGroupsAcrossTargetDims(
     const HloSharding& sharding, absl::Span<const int64_t> target_dims,
-    absl::Span<const int64_t> group_sizes) {
-  if (std::optional<MeshAxesReplicaGroupList> mesh_axes_groups =
-          GetMeshAxesPartitionGroupsAcrossTargetDims(sharding, target_dims,
-                                                     group_sizes)) {
-    return std::make_unique<MeshAxesReplicaGroupList>(*mesh_axes_groups);
+    absl::Span<const int64_t> group_sizes, bool enable_rgv3) {
+  if (enable_rgv3) {
+    if (std::optional<MeshAxesReplicaGroupList> mesh_axes_groups =
+            GetMeshAxesPartitionGroupsAcrossTargetDims(sharding, target_dims,
+                                                       group_sizes)) {
+      return std::make_unique<MeshAxesReplicaGroupList>(*mesh_axes_groups);
+    }
   }
   if (std::optional<IotaReplicaGroupList> iota_groups =
           GetIotaPartitionGroupsAcrossTargetDims(sharding, target_dims,
