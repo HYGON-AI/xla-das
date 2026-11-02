@@ -91,8 +91,6 @@ class RocmComputeCapability {
   // hurt since they are immutable, but keeping them close to methods simplifies
   // maintanance.
   static constexpr absl::string_view kSupportedGfxVersions[]{
-      "gfx900",   // MI25
-      "gfx906",   // MI50 / MI60
       "gfx908",   // MI100
       "gfx926",   // HCU K100
       "gfx928",   // HCU K100AI
@@ -196,10 +194,11 @@ class RocmComputeCapability {
     return gfx9_mi300_series() || gfx12();
   }
 
-  bool fence_before_barrier() const {
-    static constexpr absl::string_view kList[] = {"gfx900", "gfx906"};
-    return !IsThisGfxInAnyList(kList);
-  }
+  // Whether a system-scope release store to a peer's memory becomes visible to
+  // that peer without extra cache maintenance. gfx90a does not guarantee it.
+  // TODO(magaonka-amd): Evaluate upcoming hardware for hand-written collective
+  // kernel support and enable it accordingly.
+  bool has_peer_visible_atomics() const { return gfx9_mi300_series(); }
 
   // Whether a system-scope release store to a peer's memory becomes visible to
   // that peer without extra cache maintenance. gfx90a does not guarantee it.

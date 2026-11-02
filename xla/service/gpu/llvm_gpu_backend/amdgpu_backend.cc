@@ -50,6 +50,7 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Analysis/CGSCCPassManager.h"
@@ -89,7 +90,7 @@ limitations under the License.
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/TargetParser/TargetParser.h"
+#include "llvm/TargetParser/AMDGPUTargetParser.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/Internalize.h"
 #include "llvm/Transforms/Scalar.h"
@@ -868,7 +869,7 @@ absl::Status AMDGPUTargetModuleLinker(
     return xla::Internal("Incompatible compute capability was specified.");
   }
 
-  TF_RETURN_IF_ERROR(
+  RETURN_IF_ERROR(
       amdgpu::LinkROCDLIfNecessary(module, compute_capability->gfx_version(),
                                    debug_options, device_bitcode_dir_path));
 
@@ -998,13 +999,13 @@ absl::StatusOr<amdgpu::HsacoResult> CompileToHsacoInternal(
       GetTargetMachine(default_target_triple, gfx, debug_options, feature_str);
 
   // Link with ROCm-Device-Libs, and optimize the LLVM module.
-  TF_RETURN_IF_ERROR(gpu::LinkAndOptimizeModule(
+  RETURN_IF_ERROR(gpu::LinkAndOptimizeModule(
       module, gpu_version, debug_options, rocdl_dir_path,
       AMDGPUTargetModuleLinker, default_target_triple, target_machine.get(),
       kAMDGPUInlineThreshold));
 
   // Lower optimized LLVM module to HSA code object.
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       std::string hsaco_path,
       EmitModuleToHsaco(module, target_machine.get(), debug_options, gfx,
                         feature_str));
@@ -1162,8 +1163,7 @@ absl::Status LinkROCDLIfNecessary(llvm::Module* module,
     return absl::OkStatus();
   }
 
-  TF_RETURN_IF_ERROR(
-      LinkWithBitcodeVector(module, GetROCDLPaths(rocdl_dir_path)));
+  RETURN_IF_ERROR(LinkWithBitcodeVector(module, GetROCDLPaths(rocdl_dir_path)));
 
   // Sanitize stray metadata from the bitcode files
   if (auto* opencl_version = module->getNamedMetadata("opencl.ocl.version")) {

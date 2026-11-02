@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/scratch_memory_requests.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
@@ -248,10 +249,10 @@ TEST_F(BuffersDebugChecksumThunkTest,
     BufferAllocations allocations;
   };
   auto setup_device = [this](int device_ordinal) -> absl::StatusOr<TestDevice> {
-    TF_ASSIGN_OR_RETURN(se::StreamExecutor * executor,
-                        platform_->ExecutorForDevice(device_ordinal));
-    TF_ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
-                        executor->CreateStream());
+    ASSIGN_OR_RETURN(se::StreamExecutor * executor,
+                     platform_->ExecutorForDevice(device_ordinal));
+    ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
+                     executor->CreateStream());
     auto allocator =
         std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
             executor);
