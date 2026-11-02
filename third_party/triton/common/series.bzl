@@ -13,6 +13,7 @@ Modified by Hygon Information Technology Co., Ltd., 2026.
 """
 
 common_patch_list = [
-    "//third_party/triton:common/hcu-adaptation.patch",
+    "//third_party/triton:common/hcu-adaptation-part1.patch",
+    "//third_party/triton:common/hcu-adaptation-part2.patch",
     # Add new patches just above this line
 ]

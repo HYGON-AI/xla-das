@@ -146,9 +146,17 @@ static absl::StatusOr<hipblasLtEpilogue_t> AsHipblasLtEpilogue(
     case gpu::BlasLt::Epilogue::kBiasThenGELUWithAux:
       return HIPBLASLT_EPILOGUE_GELU_AUX_BIAS;
     case gpu::BlasLt::Epilogue::kSILU:
+#if defined(HIPBLASLT_EPILOGUE_SWISH_EXT)
       return HIPBLASLT_EPILOGUE_SWISH_EXT;
+#else
+      return absl::InternalError("Unsupported epilogue: kSILU");
+#endif
     case gpu::BlasLt::Epilogue::kBiasThenSILU:
+#if defined(HIPBLASLT_EPILOGUE_SWISH_BIAS_EXT)
       return HIPBLASLT_EPILOGUE_SWISH_BIAS_EXT;
+#else
+      return absl::InternalError("Unsupported epilogue: kBiasThenSILU");
+#endif
     default:
       return absl::InternalError("Unsupported epilogue: " +
                                  std::to_string((int)epilogue));
@@ -322,8 +330,10 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
   // still consuming the cublasLt matmul custom call emitted by GemmRewriter.
   // TODO(magaonka-amd): Once we get a hipBLASLt that supports complex GEMMs,
   // clean up this routing code.
+  // dtk hipBLASLt also not support F64 now
   if (cfg.output_layout.dtype == xla::C64 ||
-      cfg.output_layout.dtype == xla::C128) {
+      cfg.output_layout.dtype == xla::C128 ||
+      cfg.output_layout.dtype == xla::F64) {
     TF_RET_CHECK(epilogue == Epilogue::kDefault)
         << "rocBLAS complex fallback does not support epilogues (bias, GELU, "
            "etc.); got epilogue="
@@ -502,6 +512,7 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
     TYPED_MATMUL(float, HIP_R_8F_E5M2, HIP_R_8F_E4M3, HIP_R_8F_E4M3,
                  HIP_R_8F_E4M3)
 
+#if TF_ROCM_VERSION >= 70000
     // MX FP4 (F4E2M1FN) type combinations
     TYPED_MATMUL(float, HIP_R_4F_E2M1, HIP_R_4F_E2M1, HIP_R_32F, HIP_R_32F)
     TYPED_MATMUL(float, HIP_R_4F_E2M1, HIP_R_4F_E2M1, HIP_R_32F, HIP_R_16F)
@@ -552,6 +563,7 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
     TYPED_MATMUL(float, HIP_R_8F_E5M2, HIP_R_4F_E2M1, HIP_R_16BF, HIP_R_16BF)
     TYPED_MATMUL(float, HIP_R_8F_E5M2, HIP_R_4F_E2M1, HIP_R_16BF, HIP_R_32F)
     TYPED_MATMUL(float, HIP_R_8F_E5M2, HIP_R_4F_E2M1, HIP_R_16BF, HIP_R_16F)
+#endif  // TF_ROCM_VERSION >= 70000
 
     // Other data types:
     TYPED_MATMUL(float, HIP_R_16BF, HIP_R_16BF, HIP_R_16BF, HIP_R_16BF)
@@ -636,6 +648,13 @@ absl::Status BlasLt::RocBlasGemmPlan::ExecuteOnStream(
     xla::complex64 alpha(static_cast<float>(cfg_.alpha.real()),
                          static_cast<float>(cfg_.alpha.imag()));
     xla::complex64 beta(static_cast<float>(cfg_.beta), 0.0f);
+    return run(alpha, beta);
+  }
+  if (out.dtype == xla::F64) {
+    // rocBLAS reads a plain double for DGEMM; the complex128 carriers below
+    // only line up with what ZGEMM expects.
+    double alpha = cfg_.alpha.real();
+    double beta = cfg_.beta;
     return run(alpha, beta);
   }
   xla::complex128 alpha = cfg_.alpha;
@@ -753,12 +772,20 @@ auto BlasLt::GroupedMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
 
   std::unique_ptr<ActivateContext> activation = blas_lt_.executor_->Activate();
 
+#if TF_ROCM_VERSION >= 70000
+  auto problem = grouped_gemm_->getProblemTypes()[0];
+  grouped_gemm_->setMaxWorkspaceBytes(max_workspace_size);
+#else
+  auto problem = grouped_gemm_->getProblemTypesV2()[0];
   hipblaslt_ext::GemmPreferenceV2 preference;
   preference.setMaxWorkspaceBytes(max_workspace_size);
+#endif
 
-  SE_HIPBLAS_RETURN_IF_ERROR(
-      grouped_gemm_->algoGetHeuristic(max_algorithm_count, preference,
-                                      heuristicResult));
+  SE_HIPBLAS_RETURN_IF_ERROR(hipblaslt_ext::getAllAlgos(
+      blas_lt_.handle_.get(), hipblaslt_ext::GemmType::HIPBLASLT_GROUPED_GEMM,
+      problem.getOpA(), problem.getOpB(), problem.getTypeA(),
+      problem.getTypeB(), problem.getTypeC(), problem.getTypeD(),
+      problem.getTypeCompute(), heuristicResult));
   VLOG(2) << "Total heuristics found: " << heuristicResult.size();
   std::vector<MatmulAlgorithm> algorithms;
   algorithms.reserve(max_algorithm_count);
@@ -825,8 +852,13 @@ absl::Status BlasLt::GroupedMatmulPlan::DoInitialize(
     }
   }
 
+#if TF_ROCM_VERSION >= 70000
+  std::vector<hipblaslt_ext::GemmEpilogue> epilogues(cfg_.group_count);
+  std::vector<hipblaslt_ext::GemmInputs> inputs(cfg_.group_count);
+#else
   std::vector<hipblaslt_ext::GemmEpilogueV2> epilogues(cfg_.group_count);
   std::vector<hipblaslt_ext::GemmInputsV2> inputs(cfg_.group_count);
+#endif
 
   // Convert the epilogue from the stored member variable
   ASSIGN_OR_RETURN(auto hip_epilogue, AsHipblasLtEpilogue(epilogue));
@@ -853,7 +885,11 @@ absl::Status BlasLt::GroupedMatmulPlan::DoInitialize(
     inputs[i].setBeta(static_cast<void*>(&sbeta));
   }
 
+#if TF_ROCM_VERSION >= 70000
+  hipblaslt_ext::GemmProblemType problem(
+#else
   hipblaslt_ext::GemmProblemTypeV2 problem(
+#endif
       AsHipblasOperation(cfg_.trans_a), AsHipblasOperation(cfg_.trans_b),
       AsHipblasDataType(cfg_.type_a), AsHipblasDataType(cfg_.type_b),
       AsHipblasDataType(cfg_.type_c), AsHipblasDataType(cfg_.type_d),
