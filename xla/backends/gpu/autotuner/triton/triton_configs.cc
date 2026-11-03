@@ -51,28 +51,11 @@ std::vector<TritonGemmConfig> ParseConfig(absl::string_view config_str) {
 };
 
 absl::string_view GetDefaultConfigStr(absl::string_view filename) {
-  // embed_files generates get_<stem>() functions where stem is filename without
-  // extension
-  if (filename == "a100.txtpb") {
-    return configs::get_a100();
-  } else if (filename == "b200.txtpb") {
-    return configs::get_b200();
-  } else if (filename == "sm120.txtpb") {
-    return configs::get_sm120();
-  } else if (filename == "cuda.txtpb") {
-    return configs::get_cuda();
-  } else if (filename == "rocm.txtpb") {
-    return configs::get_rocm();
-  } else if (filename == "hcu.txtpb") {
-    return configs::get_hcu();
-  } else if (filename == "hcu_bowen.txtpb") {
-    return configs::get_hcu_bowen();
-  } else if (filename == "h100.txtpb") {
-    return configs::get_h100();
-  } else if (filename == "mi300.txtpb") {
-    return configs::get_mi300();
-  } else if (filename == "mi350.txtpb") {
-    return configs::get_mi350();
+  const struct FileToc* toc = configs::embed_default_configs_create();
+  for (size_t i = 0; i < configs::embed_default_configs_size(); ++i) {
+    if (toc[i].name == filename) {
+      return absl::string_view(toc[i].data, toc[i].size);
+    }
   }
   LOG(FATAL) << "Embedded file not found: " << filename;
 }

@@ -26,10 +26,12 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/codegen/target_machine_test_base.h"
+#include "xla/backends/cpu/transforms/library_fusion_kinds.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -51,6 +53,25 @@ struct DotRewriteTestSpec {
   std::string features;
   std::string fusion_mode;
 };
+
+// Returns true if oneDNN matcher is available in the library matcher list.
+// If oneDNN Graph API is not enabled, this will always return false.
+inline bool IsOneDnnMatcherRegistered() {
+  static bool kIsOneDnnMatcherRegistered = []() {
+    std::unique_ptr<TargetMachineFeatures> dummy_features;
+    tsl::protobuf::RepeatedField<int> fusion_types;
+    fusion_types.Add(DebugOptions::LIBRARY_FUSION_TYPE_DOT);
+    LibraryRewriterOptions options = {
+        /*use_onednn=*/true,
+        /*use_ynnpack=*/false,
+        /*onednn_fusion_types=*/&fusion_types,
+        /*ynn_fusion_types=*/nullptr,
+    };
+    LibraryRewriter rewriter(dummy_features.get(), options);
+    return rewriter.IsLibraryRegistered(kOneDnnFusionKind);
+  }();
+  return kIsOneDnnMatcherRegistered;
+}
 
 class CpuLibraryTest : public TargetMachineTestBase {
  protected:
@@ -447,12 +468,12 @@ std::vector<DotRewriteTestSpec> GetDotRewriteTestSpecs() {
   // Don't test YNNPACK if we don't build with it.
   fusion_modes["ynn"] = {"dot", "greedy"};
 
-#if XLA_ONEDNN_USE_GRAPH_API
   // Don't test oneDNN if we don't build with it.
-  dtype_map[{"onednn", "sapphirerapids"}] = {
-      {"f32", "f32"}, {"bf16", "bf16"}, {"f16", "f16"}};
-  fusion_modes["onednn"] = {"dot"};
-#endif  // XLA_ONEDNN_USE_GRAPH_API
+  if (IsOneDnnMatcherRegistered()) {
+    dtype_map[{"onednn", "sapphirerapids"}] = {
+        {"f32", "f32"}, {"bf16", "bf16"}, {"f16", "f16"}};
+    fusion_modes["onednn"] = {"dot"};
+  }
 
   std::vector<DotRewriteTestSpec> specs;
   for (auto& [lib_cpu, dtype_pairs] : dtype_map) {
@@ -594,8 +615,7 @@ TEST_P(CpuLibraryFusionTypeTest, JoiningFusions) {
   }
 }
 
-// TODO(penporn): Re-enable this test when YNNPACK supports reduce.
-TEST_P(CpuLibraryFusionTypeTest, DISABLED_Reduce) {
+TEST_P(CpuLibraryFusionTypeTest, Reduce) {
   const absl::string_view hlo_template = R"(
     HloModule reduce
 
@@ -622,6 +642,96 @@ INSTANTIATE_TEST_SUITE_P(CpuLibraryFusionTypeTestSuite,
                                               std::string("greedy"),
                                               std::string("reduce")}),
                          CpuLibraryFusionTypeTest::Name);
+
+TEST_F(CpuLibraryTest, Iota) {
+  const absl::string_view hlo_template = R"(
+    HloModule iota
+
+    ENTRY main {
+      %iota = f32[64,64] iota(), iota_dimension=1
+      %a = f32[64,64] parameter(0)
+      ROOT %add = f32[64,64] add(%iota, %a)
+    })";
+
+  DotRewriteTestSpec spec = GetDefaultTestSpec();
+  spec.fusion_mode = "greedy";
+  RunTestInternal(spec, hlo_template,
+                  FusionProperties{HloOpcode::kAdd, 1, 3, true});
+}
+
+TEST_F(CpuLibraryTest, ReduceSquare) {
+  const absl::string_view hlo_template = R"(
+    HloModule reduce_square
+
+    reducer_add {
+      lhs = $in_dtype[] parameter(0)
+      rhs = $in_dtype[] parameter(1)
+      ROOT sum = $in_dtype[] add(lhs, rhs)
+    }
+
+    ENTRY main {
+      input = $in_dtype[64,64]{1,0} parameter(0)
+      square = $in_dtype[64,64]{1,0} multiply(input, input)
+      c = $in_dtype[] constant(0)
+      ROOT output = $in_dtype[64]{0} reduce(square, c), dimensions={1}, to_apply=reducer_add
+    }
+    )";
+  DotRewriteTestSpec spec = GetDefaultTestSpec();
+  spec.fusion_mode = "reduce";
+  RunTestInternal(spec, hlo_template, {HloOpcode::kReduce, 1, 4, true});
+}
+
+TEST_F(CpuLibraryTest, ReduceSquareConvert) {
+  const absl::string_view hlo_template = R"(
+    HloModule reduce_square_convert
+
+    reducer_add {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT sum = f32[] add(lhs, rhs)
+    }
+
+    ENTRY main {
+      input = bf16[64,64]{1,0} parameter(0)
+      convert = f32[64,64]{1,0} convert(input)
+      square = f32[64,64]{1,0} multiply(convert, convert)
+      c = f32[] constant(0)
+      ROOT output = f32[64]{0} reduce(square, c), dimensions={1},
+          to_apply=reducer_add
+    }
+    )";
+  DotRewriteTestSpec spec = GetDefaultTestSpec();
+  spec.fusion_mode = "reduce";
+  RunTestInternal(spec, hlo_template, {HloOpcode::kReduce, 1, 5, true});
+}
+
+TEST_F(CpuLibraryTest, RetryFusion) {
+  //   p0 -> A (abs) -> B (add) -> C (dot) -> E (add)
+  //                     \___________________/
+  //
+  // C is the fusion starter (dot).
+  // Initially B cannot be fused because E (user of B) is not in the fusion.
+  // After C fuses E (down), B's users are all in the fusion, so B can be fused.
+  // Then A can also be fused.
+  const absl::string_view hlo_template = R"(
+    HloModule matmul
+
+    ENTRY %main {
+      %p0 = $in_dtype[64,64] parameter(0)
+      %p1 = $in_dtype[64,64] parameter(1)
+      %p2 = $in_dtype[64,64] parameter(2)
+      %A = $in_dtype[64,64] abs(%p0)
+      %B = $in_dtype[64,64] add(%A, %p1)
+      %C = $out_dtype[64,64] dot(%B, %p2), lhs_contracting_dims={1},
+                                            rhs_contracting_dims={0}
+      ROOT %E = $out_dtype[64,64] add(%C, %B)
+    })";
+
+  DotRewriteTestSpec spec = GetDefaultTestSpec();
+  spec.fusion_mode = "dot";
+  RunTestInternal(spec, hlo_template,
+                  FusionProperties{HloOpcode::kAdd, 3, 7, true});
+}
 
 TEST_F(CpuLibraryTest, UpdateFusion) {
   //                      c
@@ -682,6 +792,67 @@ TEST_F(CpuLibraryTest, SingleDotFusion) {
   spec.fusion_mode = "single_dot";
   RunTestInternal(spec, hlo_template,
                   FusionProperties{HloOpcode::kDot, 2, 3, true});
+}
+
+TEST_F(CpuLibraryTest, NoHugeFusions) {
+  // A long chain of absolutes then a dot.
+  const absl::string_view hlo_template = R"(
+    HloModule matmul
+
+    ENTRY %main {
+      %a = $in_dtype[64,64] parameter(0)
+      %b = $in_dtype[64,64] parameter(1)
+      %abs0 = $in_dtype[64,64] abs(%a)
+      $absolutes
+      ROOT %dot = $in_dtype[64,64] dot(%abs$num_absolutes, %b),
+                  lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    })";
+
+  constexpr int kNumAbsolutes = kMaxInstructionsInFusion * 2;
+  std::string absolutes = "";
+  for (int i = 1; i < kNumAbsolutes; ++i) {
+    absl::StrAppend(
+        &absolutes,
+        absl::StrFormat("%%abs%d = $in_dtype[64,64] abs(%%abs%d)\n", i, i - 1));
+  }
+
+  DotRewriteTestSpec spec = GetDefaultTestSpec();
+  spec.fusion_mode = "dot";
+  std::string hlo = absl::StrReplaceAll(
+      hlo_template, {{"$absolutes", absolutes},
+                     {"$num_absolutes", absl::StrCat(kNumAbsolutes - 1)}});
+  RunTestInternal(
+      spec, hlo,
+      FusionProperties{HloOpcode::kDot, 2, kMaxInstructionsInFusion, true});
+}
+
+TEST_F(CpuLibraryTest, DoubleUseFusion) {
+  const absl::string_view hlo = R"(
+    HloModule m
+
+    fused_computation {
+      p0 = f32[64,64] parameter(0)
+      ROOT dot = f32[64,64] dot(p0, p0), lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+    }
+
+    ENTRY main {
+      p = f32[64,64] parameter(0)
+      f1 = f32[64,64] fusion(p), kind=kCustom, calls=fused_computation,
+        backend_config={
+          "fusion_config":{
+            "kind":"__ynn_fusion"
+          }
+        }
+      add = f32[64,64] add(f1, f1)
+      ROOT dot2 = f32[64,64] dot(add, add), lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+    }
+  )";
+
+  DotRewriteTestSpec spec = GetDefaultTestSpec();
+  spec.fusion_mode = "dot";
+  RunTestInternal(spec, hlo, FusionProperties{HloOpcode::kDot, 1, 4, true});
 }
 
 }  // namespace
