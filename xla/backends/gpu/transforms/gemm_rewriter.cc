@@ -136,6 +136,13 @@ bool IsF8Type(const HloInstruction* instr) {
   return primitive_util::IsF8Type(instr->shape().element_type());
 }
 
+bool IsCublasLtEnabled(const DebugOptions& debug_options) {
+  if (!debug_options.has_xla_gpu_enable_cublaslt()) {
+    return true;
+  }
+  return debug_options.xla_gpu_enable_cublaslt();
+}
+
 // Returns a new shape with non-batch dimensions padded to multiples of 16, as
 // required by cuBLASLt FP8 gemms.
 Shape PadShapeToMultipleOf16(const Shape old_shape,
@@ -490,6 +497,21 @@ auto CublasLtMatmulMaybeF8OrGrouped(HloInstruction** instr) {
                         kCublasLtGroupedMatmulCallTarget});
 }
 
+auto GemmOrCublasLtMatmul(HloInstruction** instr) {
+  return m::CustomCall(instr, {kGemmCallTarget, kCublasLtMatmulCallTarget});
+}
+
+auto GemmOrCublasLtMatmulMaybeF8(HloInstruction** instr) {
+  return m::CustomCall(instr, {kGemmCallTarget, kCublasLtMatmulCallTarget,
+                               kCublasLtMatmulF8CallTarget});
+}
+
+auto GemmOrCublasLtMatmulMaybeF8OrGrouped(HloInstruction** instr) {
+  return m::CustomCall(
+      instr, {kGemmCallTarget, kCublasLtMatmulCallTarget,
+              kCublasLtMatmulF8CallTarget, kCublasLtGroupedMatmulCallTarget});
+}
+
 auto BcastConstScalar(HloInstruction** instr, double value) {
   return m::Broadcast(instr, m::ConstantScalar(value));
 }
@@ -676,10 +698,12 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
  public:
   explicit GemmRewriterVisitor(const se::GpuComputeCapability& gpu_version,
                                se::SemanticVersion toolkit_version,
-                               const GemmRewriterOptions options)
+                               const GemmRewriterOptions options,
+                               bool enable_cublaslt)
       : gpu_version_(gpu_version),
         toolkit_version_(toolkit_version),
-        options_(options) {}
+        options_(options),
+        enable_cublaslt_(enable_cublaslt) {}
 
   absl::Status HandleDot(HloInstruction* instr) override {
     ASSIGN_OR_RETURN(
@@ -699,11 +723,11 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       instr = normalized_instr->mutable_operand(0);
     }
 
+    const DebugOptions& debug_options =
+        instr->GetModule()->config().debug_options();
+
     int64_t gemm_rewrite_size_threshold =
-        instr->GetModule()
-            ->config()
-            .debug_options()
-            .xla_gpu_gemm_rewrite_size_threshold();
+        debug_options.xla_gpu_gemm_rewrite_size_threshold();
     ASSIGN_OR_RETURN(bool is_matmul_tiny,
                      IsMatrixMultiplicationTooSmallForRewriting(
                          *instr, gemm_rewrite_size_threshold));
@@ -753,6 +777,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         ASSIGN_OR_RETURN(
             bool supported_by_cublaslt,
             GemmIsSupportedByCublasLt(*instr, gemm_backend_config));
+        // When BLASLt is disabled, keep FP8 dots on the legacy path
+        supported_by_cublaslt = supported_by_cublaslt && enable_cublaslt_;
         std::optional<MatchedFp8Param> a, b;
         if (supported_by_cublaslt && HloPredicateIsOp<HloOpcode::kDot>(instr) &&
             (a = MatchFp8Param(
@@ -816,8 +842,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         debug_options.xla_gpu_experimental_use_ragged_dot_fusion();
     bool grouped_gemm_enabled =
         debug_options.xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
-        // NOLINTNEXTLINE(clang-diagnostic-deprecated-declarations)
-        debug_options.xla_gpu_enable_cublaslt();
+        enable_cublaslt_;
     if (ragged_dot_fusion_enabled || !grouped_gemm_enabled ||
         !IsGpublasLtSupportedGroupedMatMul(*instr)) {
       return absl::OkStatus();
@@ -916,7 +941,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     HloInstruction *alpha, *existing_gemm;
     if (Match(instr,
               m::MultiplyAnyOrder(
-                  CublasLtMatmulMaybeF8(&existing_gemm).WithOneUser(),
+                  GemmOrCublasLtMatmulMaybeF8(&existing_gemm).WithOneUser(),
                   m::Broadcast(m::ConstantScalar(&alpha)).WithOneUser()))) {
       ASSIGN_OR_RETURN(auto gpu_config,
                        existing_gemm->backend_config<GpuBackendConfig>());
@@ -1115,7 +1140,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     if (Match(
             instr,
             m::AddAnyOrder(
-                m::Bitcast(CublasLtMatmulMaybeF8(&existing_gemm).WithOneUser())
+                m::Bitcast(
+                    GemmOrCublasLtMatmulMaybeF8(&existing_gemm).WithOneUser())
                     .WithOneUser(),
                 m::Op(&bias).WithPredicate(is_not_broadcast)))) {
       HloInstruction* new_bitcast =
@@ -1136,8 +1162,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     if (Match(instr,
               m::AddAnyOrder(
                   m::AnyOf<HloInstruction>(
-                      CublasLtMatmul(&existing_gemm).WithOneUser(),
-                      m::Convert(CublasLtMatmul(&existing_gemm).WithOneUser())
+                      GemmOrCublasLtMatmul(&existing_gemm).WithOneUser(),
+                      m::Convert(
+                          GemmOrCublasLtMatmul(&existing_gemm).WithOneUser())
                           .WithOneUser()),
                   m::Op(&bias).WithPredicate(is_not_broadcast)))) {
       ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
@@ -1145,9 +1172,13 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       const GemmBackendConfig& gemm_backend_config =
           gpu_backend_config.gemm_backend_config();
       // check if type combination is supported here
-      ASSIGN_OR_RETURN(bool types_are_supported,
-                       TypesAreSupportedByCublasLt(*existing_gemm,
-                                                   gemm_backend_config, instr));
+      ASSIGN_OR_RETURN(
+          bool types_are_supported,
+          IsLegacyCublasMatmul(*existing_gemm)
+              ? TypesAreSupportedByLegacyCublas(*existing_gemm,
+                                                gemm_backend_config, instr)
+              : TypesAreSupportedByCublasLt(*existing_gemm,
+                                            gemm_backend_config, instr));
 
       // for mix type gemm, only fuse add if there is no consumers
       // ROOT add
@@ -1171,7 +1202,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
               m::AddAnyOrder(
                   OptionalBitcast(&optional_bitcast_matrix,
                                   OptionalSlice(&optional_slice_matrix,
-                                                CublasLtMatmulMaybeF8OrGrouped(
+                                                GemmOrCublasLtMatmulMaybeF8OrGrouped(
                                                     &existing_gemm)
                                                     .WithOneUser()))
                       .WithOneUser(),
@@ -1955,7 +1986,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // true if those uses all come before this operation.  But copy-insertion
     // runs before scheduling, so it can't know and has to conservatively insert
     // copies.)
-    if (can_overwrite_bias) {
+    if (IsLegacyCublasMatmul(*fused_op) || can_overwrite_bias) {
       xla::Cast<HloCustomCallInstruction>(fused_op.get())
           ->set_output_to_operand_aliasing({{{}, {bias_operand_index, {}}}});
     }
@@ -2307,6 +2338,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   se::GpuComputeCapability gpu_version_;
   stream_executor::SemanticVersion toolkit_version_;
   GemmRewriterOptions options_;
+  // Effective value of --xla_gpu_enable_cublaslt, possibly overridden by the
+  // pass options (used by the autotuner's fission pipelines).
+  bool enable_cublaslt_ = true;
 
   // Choose cublas or cublasLt for the target of the custom call that instr will
   // be rewritten into.
@@ -2314,16 +2348,26 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       const HloInstruction& instr,
       const GemmBackendConfig& gemm_backend_config) const {
     // All internal conditions are met, check if we meet the requirements of
-    // cublasLt.
-    ASSIGN_OR_RETURN(bool gemm_is_supported_by_cublas_lt,
-                     GemmIsSupportedByCublasLt(instr, gemm_backend_config));
-    if (gemm_is_supported_by_cublas_lt) {
-      return absl::string_view(kCublasLtMatmulCallTarget);
+    // cublasLt. When BLASLt is disabled we deliberately skip this check and
+    // emit the legacy BLAS custom call instead.
+    if (enable_cublaslt_) {
+      ASSIGN_OR_RETURN(bool gemm_is_supported_by_cublas_lt,
+                       GemmIsSupportedByCublasLt(instr, gemm_backend_config));
+      if (gemm_is_supported_by_cublas_lt) {
+        return absl::string_view(kCublasLtMatmulCallTarget);
+      }
+    }
+
+    ASSIGN_OR_RETURN(
+        bool types_are_supported_by_legacy_cublas,
+        TypesAreSupportedByLegacyCublas(instr, gemm_backend_config));
+    if (types_are_supported_by_legacy_cublas) {
+      return absl::string_view(kGemmCallTarget);
     }
 
     return absl::InternalError(
-        "GEMM is not supported by cublasLt and legacy cublas fallback is "
-        "removed.");
+        "GEMM is not supported by cublasLt and neither by the legacy "
+        "cublas/rocBLAS fallback (see --xla_gpu_enable_cublaslt).");
   }
 
   absl::StatusOr<bool> TypesAreSupportedByLegacyCublas(
@@ -2888,8 +2932,10 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
 absl::StatusOr<bool> RunOnComputation(HloComputation* computation,
                                       se::GpuComputeCapability gpu_version,
                                       se::SemanticVersion toolkit_version,
-                                      GemmRewriterOptions options) {
-  GemmRewriterVisitor visitor(gpu_version, toolkit_version, options);
+                                      GemmRewriterOptions options,
+                                      bool enable_cublaslt) {
+  GemmRewriterVisitor visitor(gpu_version, toolkit_version, options,
+                              enable_cublaslt);
   RETURN_IF_ERROR(computation->Accept(&visitor));
   GemmWorkspaceRewriteVisitor workspace_visitor(gpu_version);
   RETURN_IF_ERROR(computation->Accept(&workspace_visitor));
@@ -2908,11 +2954,15 @@ GemmRewriter::GemmRewriter(se::GpuComputeCapability gpu_version,
 absl::StatusOr<bool> GemmRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  const bool enable_cublaslt = options_.enable_cublaslt.value_or(
+      IsCublasLtEnabled(module->config().debug_options()));
   bool changed = false;
   for (HloComputation* computation :
        GetFusibleComputations(*module, execution_threads)) {
-    ASSIGN_OR_RETURN(bool result, RunOnComputation(computation, gpu_version_,
-                                                   toolkit_version_, options_));
+    ASSIGN_OR_RETURN(bool result,
+                     RunOnComputation(computation, gpu_version_,
+                                      toolkit_version_, options_,
+                                      enable_cublaslt));
     changed |= result;
   }
   return changed;

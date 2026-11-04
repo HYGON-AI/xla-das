@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -1924,7 +1928,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       tsl::Flag("xla_gpu_enable_cublaslt",
                 bool_setter_for(&DebugOptions::set_xla_gpu_enable_cublaslt),
                 debug_options->xla_gpu_enable_cublaslt(),
-                "[Deprecated] Use cuBLASLt for GEMMs when possible."));
+                "Use cuBLASLt (hipBLASLt on ROCm) for GEMMs when possible. "
+                "Set to false to route every non-fused GEMM to the legacy "
+                "cuBLAS/rocBLAS custom call instead."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_command_buffer",
       SetterForRepeatedEnum<DebugOptions::CommandBufferCmdType>(

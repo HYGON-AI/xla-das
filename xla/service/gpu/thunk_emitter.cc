@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /*Copyright 2022 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -88,6 +92,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/dynamic_slice_fusion_v2_thunk.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/fft_thunk.h"
+#include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/host_execute_thunk.h"
 #include "xla/backends/gpu/runtime/host_send_recv_thunk.h"
@@ -513,6 +518,32 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConvolutionThunk(
                        std::move(descriptor), std::move(operand_slices),
                        std::move(result_slices), scratch_slice));
   return GetThunkSequence(std::move(thunk));
+}
+
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitGemm(
+    const HloCustomCallInstruction* instr) {
+  ASSIGN_OR_RETURN(BufferAllocation::Slice lhs,
+                   GetAllocationSliceForHlo(instr->operand(0), {}));
+  ASSIGN_OR_RETURN(BufferAllocation::Slice rhs,
+                   GetAllocationSliceForHlo(instr->operand(1), {}));
+
+  BufferAllocation::Slice output;
+  std::optional<BufferAllocation::Slice> workspace;
+  if (instr->shape().IsArray()) {
+    ASSIGN_OR_RETURN(output, GetAllocationSliceForHlo(instr, {}));
+  } else {
+    ASSIGN_OR_RETURN(output, GetAllocationSliceForHlo(instr, {0}));
+    ASSIGN_OR_RETURN(workspace, GetAllocationSliceForHlo(instr, {1}));
+  }
+
+  ASSIGN_OR_RETURN(
+      GemmConfig gemm_config,
+      GemmConfig::For(instr, ir_emitter_context_->gpu_compute_capability()));
+  return ThunkSequence::Of(std::make_unique<GemmThunk>(
+      Thunk::ThunkInfo::WithProfileAnnotation(
+          instr, ir_emitter_context_->GetNextThunkId()),
+      std::move(gemm_config), lhs, rhs, output, workspace,
+      RequireDeterminism(ir_emitter_context_->hlo_module().config())));
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunk(
@@ -2707,6 +2738,9 @@ AsyncThunkSequence ThunkEmitter::EmitCustomCallSwitch(
     const HloInstruction* hlo) {
   auto* custom_call = Cast<HloCustomCallInstruction>(hlo);
 
+  if (IsLegacyCublasMatmul(*hlo)) {
+    return EmitGemm(custom_call);
+  }
   if (IsCublasLtMatmul(*hlo)) {
     return EmitCublasLtMatmulThunk(custom_call);
   }
