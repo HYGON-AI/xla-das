@@ -1,3 +1,5 @@
+# Modified by Hygon Information Technology Co., Ltd., 2026.
+
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
@@ -108,6 +110,7 @@ cc_library(
         "//xla/service/gpu/autotuning:autotuner_status_key",
         "//xla/tools:hlo_decomposer_lib",
         "//xla/tsl/concurrency:future",
+        "//xla/tsl/lib/math:math_util",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/algorithm:container",
