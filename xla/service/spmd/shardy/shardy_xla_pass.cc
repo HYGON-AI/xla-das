@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -371,8 +375,8 @@ absl::Status runShardingPropagation(HloModule* hloModule,
   // 6 months compatibility window.
   // TODO (b/519501636): Remove this fallback once 6 months compatibility window
   // for ifrt has passed in Nov'2026.
-  if (xla::sdy::hasFrontendMhloShardings(mlirModule) ||
-      xla::sdy::hasFrontendMeshes(mlirModule)) {
+  if (enableHloShardingV3 && (xla::sdy::hasFrontendMhloShardings(mlirModule) ||
+                              xla::sdy::hasFrontendMeshes(mlirModule))) {
     // Fallback checks for mhlo sharding is not sufficient, we need to check for
     // meshes as well to handle shard map cases.
     LOG(WARNING)
