@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 edition = "2023";
 
 package xla.autotuner;
@@ -10,11 +14,12 @@ option java_outer_classname = "Backends";
 // When adding a fission backend for a backend X, it should be named X_FISSION.
 enum Backend {
   UNSPECIFIED_BACKEND = 0;
-  reserved 3, 5, 12, 15;
-  reserved CUBLAS, CUBLAS_FISSION, ROCBLAS, ROCBLAS_FISSION;
+  reserved 3, 12;
+  reserved CUBLAS, CUBLAS_FISSION;
   CUDNN = 1;
   TRITON = 2;
   CUBLASLT = 4;
+  ROCBLAS = 5;
   HIPBLASLT = 6;
   MIOPEN = 7;
   CUSTOM_KERNEL = 8;
@@ -23,5 +28,6 @@ enum Backend {
   LLVM_KERNEL_EMITTER = 11;
   CUBLASLT_FISSION = 13;
   CUSTOM_KERNEL_FISSION = 14;
+  ROCBLAS_FISSION = 15;
   HIPBLASLT_FISSION = 16;
 }

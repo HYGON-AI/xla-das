@@ -1,4 +1,7 @@
 /* Copyright 2026 The OpenXLA Authors.
+   Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+   SPDX-License-Identifier: Apache-2.0
+   Modified by Hygon Information Technology Co., Ltd., 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -30,12 +33,13 @@ limitations under the License.
 namespace xla::gpu {
 
 RcclSymmetricMemory::RcclSymmetricMemory(
-    ncclComm_t comm, ncclWindow_t win, stream_executor::DeviceAddressBase addr)
+    ncclComm_t comm, RcclWindow win, stream_executor::DeviceAddressBase addr)
     : comm_(comm), win_(win), addr_(addr) {}
 
 absl::StatusOr<std::unique_ptr<RcclSymmetricMemory>>
 RcclSymmetricMemory::Create(ncclComm_t comm,
                             stream_executor::DeviceAddressBase addr) {
+#if TF_ROCM_VERSION >= 70000
   VLOG(3) << absl::StrFormat(
       "Create RCCL symmetric memory on comm=%p from: ptr=%p; size=%ld", comm,
       addr.opaque(), addr.size());
@@ -45,11 +49,17 @@ RcclSymmetricMemory::Create(ncclComm_t comm,
       comm, addr.opaque(), addr.size(), &win, NCCL_WIN_COLL_SYMMETRIC));
 
   return absl::WrapUnique(new RcclSymmetricMemory(comm, win, addr));
+#else
+  return absl::UnimplementedError(
+      "RCCL symmetric memory requires ROCm 7.0 or newer");
+#endif
 }
 
 RcclSymmetricMemory::~RcclSymmetricMemory() {
+#if TF_ROCM_VERSION >= 70000
   VLOG(3) << absl::StrFormat("Destroy %v", *this);
   XLA_RCCL_LOG_IF_ERROR(ncclCommWindowDeregister(comm_, win_));
+#endif
 }
 
 stream_executor::DeviceAddressBase RcclSymmetricMemory::addr() const {

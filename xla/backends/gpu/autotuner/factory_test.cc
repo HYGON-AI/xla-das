@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -100,7 +104,7 @@ INSTANTIATE_TEST_SUITE_P(
     All, FactoryTest,
     ::testing::Values(
         FactoryTestParams{{}, 6, /*run_on_cuda=*/true, /*run_on_rocm=*/false},
-        FactoryTestParams{{}, 6, /*run_on_cuda=*/false, /*run_on_rocm=*/true},
+        FactoryTestParams{{}, 8, /*run_on_cuda=*/false, /*run_on_rocm=*/true},
         FactoryTestParams{{Backend::TRITON}, 1},
         FactoryTestParams{{Backend::TRITON, Backend::CUBLASLT},
                           2,

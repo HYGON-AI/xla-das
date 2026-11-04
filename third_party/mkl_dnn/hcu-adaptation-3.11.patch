@@ -1,0 +1,14 @@
+diff --git a/third_party/xbyak/xbyak_util.h b/third_party/xbyak/xbyak_util.h
+--- a/third_party/xbyak/xbyak_util.h
++++ b/third_party/xbyak/xbyak_util.h
+@@ -441,7 +441,9 @@ public:
+ 	uint32_t getNumCores(CpuTopologyLevel level) const {
+ 		switch (level) {
+ 		case SmtLevel: return numCores_[level - 1];
+-		case CoreLevel: return numCores_[level - 1] / numCores_[SmtLevel - 1];
++		case CoreLevel:
++			if (numCores_[SmtLevel - 1] == 0) return 0;
++			return numCores_[level - 1] / numCores_[SmtLevel - 1];
+ 		default: XBYAK_THROW_RET(ERR_X2APIC_IS_NOT_SUPPORTED, 0)
+ 		}
+ 	}

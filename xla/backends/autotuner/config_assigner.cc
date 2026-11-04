@@ -1,4 +1,7 @@
 /* Copyright 2026 The OpenXLA Authors.
+   Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+   SPDX-License-Identifier: Apache-2.0
+   Modified by Hygon Information Technology Co., Ltd., 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -52,6 +55,7 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/autotuner_status_key.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/concurrency/future.h"
+#include "xla/tsl/lib/math/math_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "tsl/platform/fingerprint.h"
 
@@ -165,10 +169,10 @@ absl::Status ConfigAssigner::AssignConfigs(
   }
 
   // 2. Shard and get configs for instructions in the current shard.
-  const size_t bucket_size =
-      std::ceil(static_cast<double>(all_instruction_groups.size()) /
-                static_cast<double>(total_shards));
-  const size_t start = bucket_size * my_shard_index;
+  const size_t bucket_size = tsl::MathUtil::CeilOfRatio<size_t>(
+      all_instruction_groups.size(), static_cast<size_t>(total_shards));
+  const size_t start =
+      std::min(bucket_size * my_shard_index, all_instruction_groups.size());
   const size_t end =
       std::min(start + bucket_size, all_instruction_groups.size());
   std::vector<EquivalentInstructions> instruction_groups;

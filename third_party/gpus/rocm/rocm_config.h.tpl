@@ -1,5 +1,5 @@
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
-
+   Modified by Hygon Information Technology Co., Ltd., 2026.
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -24,8 +24,8 @@ limitations under the License.
 // NOTE: HipBlasLt is now always available, this flag is deprecated !
 #define TF_HIPBLASLT 1
 
-#if TF_ROCM_VERSION != 0 && TF_ROCM_VERSION < 70100
-#error "XLA requires ROCm 7.1 or higher. Older versions are no longer supported."
+#if TF_ROCM_VERSION != 0 && TF_ROCM_VERSION < 60000
+#error "This build requires ROCm 6.0 or higher; DTK 26.04 (ROCm 6.3) is the oldest supported DTK."
 #endif
 
 #endif  // ROCM_ROCM_CONFIG_H_

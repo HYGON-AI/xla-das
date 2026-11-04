@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,7 +44,11 @@ hipDataType AsHipblasDataType(blas::DataType type) {
       LOG(FATAL) << "hipblaslt does not support F8E4M3, F8E3M4, and F8E8M0FNU "
                     "as matrix data types";
     case blas::DataType::kF4E2M1FN:
+#if TF_ROCM_VERSION >= 70000
       return HIP_R_4F_E2M1;
+#else
+      LOG(FATAL) << "FP4 matrix data types require hipBLASLt from ROCm 7.0 or newer";
+#endif
     case blas::DataType::kF8E5M2FNUZ:
       return HIP_R_8F_E5M2_FNUZ;
     case blas::DataType::kF8E4M3FNUZ:

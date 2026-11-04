@@ -1,4 +1,7 @@
 /* Copyright 2026 The OpenXLA Authors.
+   Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+   SPDX-License-Identifier: Apache-2.0
+   Modified by Hygon Information Technology Co., Ltd., 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -32,6 +35,12 @@ limitations under the License.
 
 namespace xla::gpu {
 
+#if TF_ROCM_VERSION >= 70000
+using RcclWindow = ncclWindow_t;
+#else
+using RcclWindow = void*;
+#endif  // TF_ROCM_VERSION >= 70000
+
 // An RCCL window registration handle that makes local buffers accessible from
 // remote peers via symmetric memory registration. Analogous to
 // NcclSymmetricMemory for the ROCm/RCCL platform.
@@ -47,18 +56,18 @@ class RcclSymmetricMemory final : public SymmetricMemory {
   // multimem_addr() and peer_addr() are not supported by RCCL; the base-class
   // defaults (returning Unimplemented) are used.
 
-  ncclWindow_t win() const { return win_; }
+  RcclWindow win() const { return win_; }
 
   std::string ToString() const final;
 
   PackedKernelArg PackKernelArg() const final;
 
  private:
-  RcclSymmetricMemory(ncclComm_t comm, ncclWindow_t win,
+  RcclSymmetricMemory(ncclComm_t comm, RcclWindow win,
                       stream_executor::DeviceAddressBase addr);
 
   ncclComm_t comm_;
-  ncclWindow_t win_;
+  RcclWindow win_;
   stream_executor::DeviceAddressBase addr_;
 };
 

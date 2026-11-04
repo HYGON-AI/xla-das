@@ -50,7 +50,7 @@ _TMPDIR = "TMPDIR"
 _HYHAL_PATH = "HYHAL_PATH"
 _DEFAULT_HYHAL_PATH = "/opt/hyhal"
 _ROCM_TOOLKIT_PATH = "ROCM_PATH"
-_DEFAULT_ROCM_TOOLKIT_PATH = "/opt/rocm"
+_DEFAULT_ROCM_TOOLKIT_PATH = "/opt/dtk"
 
 _TF_ROCM_RBE_DOCKER_IMAGE = "TF_ROCM_RBE_DOCKER_IMAGE"
 _TF_ROCM_RBE_POOL = "TF_ROCM_RBE_POOL"
@@ -108,7 +108,7 @@ def _rocm_include_path(repository_ctx, rocm_config):
     # HCU: DTK's dcc dependency files can report the clang resource directory
     # through the /opt/dtk/llvm symlink even when -print-resource-dir resolves
     # to /opt/dtk/dcc. Declare both spellings as builtin include directories.
-    rocm_llvm_root = get_host_environ(repository_ctx, _ROCM_TOOLKIT_PATH, rocm_config.rocm_toolkit_path)
+    rocm_llvm_root = get_host_environ(repository_ctx, _ROCM_TOOLKIT_PATH, _DEFAULT_ROCM_TOOLKIT_PATH)
     rocm_llvm_resource_dir = rocm_llvm_root + "/llvm/lib/clang/17.0.0"
     inc_dirs.append(rocm_llvm_resource_dir + "/include")
     inc_dirs.append(rocm_llvm_resource_dir + "/share")
@@ -563,6 +563,7 @@ def _rocm_autoconf_impl(repository_ctx):
 _ENVIRONS = [
     "TF_NEED_ROCM",
     "TF_NEED_CUDA",  # Needed by the `if_gpu_is_configured` macro
+    _ROCM_TOOLKIT_PATH,
     _TF_ROCM_AMDGPU_TARGETS,
     _TF_ROCM_RBE_DOCKER_IMAGE,
     _TF_ROCM_RBE_POOL,

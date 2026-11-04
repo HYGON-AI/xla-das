@@ -1,4 +1,7 @@
 /* Copyright 2024 The OpenXLA Authors.
+   Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+   SPDX-License-Identifier: Apache-2.0
+   Modified by Hygon Information Technology Co., Ltd., 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -85,9 +88,29 @@ static absl::StatusOr<ncclDataType_t> ToNcclDataType(
     se::RocmComputeCapability rocm_cc) {
   switch (dtype) {
     case F8E5M2:
+#if TF_ROCM_VERSION >= 70000
       return rocm_cc.has_ocp_fp8_support() ? ncclFloat8e5m2 : ncclInt8;
+#elif defined(RCCL_FLOAT8)
+      return rocm_cc.has_ocp_fp8_support() ? ncclFp8E5M2 : ncclInt8;
+#else
+      if (is_reduction_op) {
+        return absl::UnimplementedError(
+            "FP8 reductions require RCCL native FP8 data types");
+      }
+      return ncclInt8;
+#endif  // TF_ROCM_VERSION >= 70000
     case F8E4M3FN:
+#if TF_ROCM_VERSION >= 70000
       return rocm_cc.has_ocp_fp8_support() ? ncclFloat8e4m3 : ncclInt8;
+#elif defined(RCCL_FLOAT8)
+      return rocm_cc.has_ocp_fp8_support() ? ncclFp8E4M3 : ncclInt8;
+#else
+      if (is_reduction_op) {
+        return absl::UnimplementedError(
+            "FP8 reductions require RCCL native FP8 data types");
+      }
+      return ncclInt8;
+#endif  // TF_ROCM_VERSION >= 70000
     case S8:
     case F8E5M2FNUZ:
     case F8E4M3FNUZ:

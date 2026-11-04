@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,7 +81,7 @@ using AutotuneDecision = Decision;
 AutotuneDecision AllowRegSpillsForGpuInstruction(
     const HloInstruction& instruction) {
   if (instruction.opcode() == HloOpcode::kCustomCall) {
-    if (IsCublasLtGemm(instruction) ||
+    if (IsCublasGemm(instruction) ||
         IsCustomCallToDnnConvolution(instruction)) {
       return AutotuneDecision::Forbid(
           "Register spilling is not allowed for GEMM/Conv custom calls");
@@ -103,7 +107,7 @@ AutotuneDecision ShouldAutotuneCustomCall(bool do_not_autotune_cublas,
                                           bool do_not_autotune_cudnn,
                                           const HloInstruction& instruction) {
   auto gpu_config = instruction.backend_config<GpuBackendConfig>();
-  if (IsCublasLtGemm(instruction)) {
+  if (IsCublasGemm(instruction)) {
     if (do_not_autotune_cublas) {
       return AutotuneDecision::Forbid("Autotuning cuBLAS is disabled");
     }
@@ -302,6 +306,17 @@ AutotunerPass::GetGpuAutotunerBackends(
     disabled_autotune_backends.push_back(autotuner::Backend::HIPBLASLT);
     disabled_autotune_backends.push_back(autotuner::Backend::MIOPEN);
     disabled_autotune_backends.push_back(autotuner::Backend::HIPBLASLT_FISSION);
+  }
+
+  const bool enable_cublaslt = !debug_options.has_xla_gpu_enable_cublaslt() ||
+                               debug_options.xla_gpu_enable_cublaslt();
+  if (!enable_cublaslt) {
+    disabled_autotune_backends.push_back(autotuner::Backend::CUBLASLT);
+    disabled_autotune_backends.push_back(autotuner::Backend::CUBLASLT_FISSION);
+    // NOTE(ROCm): Do not disable hipblaslt backends even with
+    // xla_gpu_enable_cublaslt=false since we need them for fp8
+  } else {
+    disabled_autotune_backends.push_back(autotuner::Backend::ROCBLAS_FISSION);
   }
 
   if (debug_options.xla_gpu_autotune_level() == 0 ||

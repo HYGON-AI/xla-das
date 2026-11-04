@@ -66,6 +66,8 @@ limitations under the License.
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Metadata.h"
@@ -654,6 +656,25 @@ absl::Status CompileModuleToHsacoWithHcu(
     llvm::Module* module, llvm::TargetMachine* target_machine,
     absl::string_view gfx, absl::string_view ir_path,
     absl::string_view asm_path, absl::string_view hsaco_path) {
+  // HCU codegen lacks some boolean-to-bfloat conversion patterns.
+  for (llvm::Function& function : *module) {
+    for (llvm::BasicBlock& block : function) {
+      for (auto it = block.begin(); it != block.end();) {
+        auto* cast = llvm::dyn_cast<llvm::UIToFPInst>(&*it++);
+        if (cast == nullptr || !cast->getSrcTy()->isIntegerTy(1) ||
+            !cast->getDestTy()->isBFloatTy()) {
+          continue;
+        }
+        llvm::IRBuilder<> builder(cast);
+        auto* one = llvm::ConstantFP::get(cast->getDestTy(), 1.0);
+        auto* zero = llvm::ConstantFP::get(cast->getDestTy(), 0.0);
+        cast->replaceAllUsesWith(
+            builder.CreateSelect(cast->getOperand(0), one, zero));
+        cast->eraseFromParent();
+      }
+    }
+  }
+
   std::string ir;
   llvm::raw_string_ostream ir_stream(ir);
   module->setDataLayout(target_machine->createDataLayout());

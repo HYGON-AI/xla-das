@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2019 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -405,6 +409,54 @@ class CublasLtGemmRewriteTest
     }
   }
 };
+
+class BlasGemmRewriteTest
+    : public HloInterpreterReferenceMixin<GemmRewriteTestBase> {
+ public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options = GemmRewriteTestBase::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_enable_cublaslt(false);
+    debug_options.set_xla_gpu_enable_triton_gemm(false);
+    return debug_options;
+  }
+};
+
+TEST_F(BlasGemmRewriteTest, UsesLegacyBlasCustomCallF32) {
+  const char* hlo_text = R"(
+HloModule LegacyBlasF32
+
+ENTRY Test {
+  x = f32[64,64]{1,0} parameter(0)
+  y = f32[64,64]{1,0} parameter(1)
+  ROOT dot = f32[64,64]{1,0} dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-4, 1e-4}));
+  MatchOptimizedHlo(hlo_text, R"(
+; CHECK: custom_call_target="__cublas$gemm"
+)");
+  MatchOptimizedHlo(hlo_text, R"(
+; CHECK-NOT: custom_call_target="__cublas$lt$matmul"
+)");
+}
+
+TEST_F(BlasGemmRewriteTest, UsesLegacyBlasCustomCallF16) {
+  const char* hlo_text = R"(
+HloModule LegacyBlasF16
+
+ENTRY Test {
+  x = f16[64,64]{1,0} parameter(0)
+  y = f16[64,64]{1,0} parameter(1)
+  ROOT dot = f16[64,64]{1,0} dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-2, 1e-2}));
+  MatchOptimizedHlo(hlo_text, R"(
+; CHECK: custom_call_target="__cublas$gemm"
+)");
+}
 
 TEST_F(CublasLtGemmRewriteTest, AlphaBetaRewrite) {
   const char* hlo_text = R"(
