@@ -1,4 +1,5 @@
 # Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+# Modified by Hygon Information Technology Co., Ltd., 2026.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -95,9 +96,10 @@ def _find_rocm_config(rocm_install_path):
   major, minor, patch = rocm_version_numbers(rocm_install_path)
 
   composite_version = _get_composite_version_number(major, minor, patch)
-  if composite_version < 70100:
+
+  if composite_version < 60000:
     raise ConfigError(
-        "XLA requires ROCm 7.1 or higher, but found {}.{}.{}".format(
+        "This build requires ROCm 6.0 or higher, but found {}.{}.{}".format(
             major, minor, patch))
 
   rocm_config = {
