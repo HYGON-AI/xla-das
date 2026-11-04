@@ -1,71 +1,18 @@
 diff --git a/llvm/include/llvm/IR/Intrinsics.td b/llvm/include/llvm/IR/Intrinsics.td
 --- a/llvm/include/llvm/IR/Intrinsics.td
 +++ b/llvm/include/llvm/IR/Intrinsics.td
-@@ -3038,5 +3038,6 @@ include "llvm/IR/IntrinsicsNVVM.td"
+@@ -3126,6 +3126,7 @@ include "llvm/IR/IntrinsicsHexagon.td"
+ include "llvm/IR/IntrinsicsNVVM.td"
  include "llvm/IR/IntrinsicsMips.td"
  include "llvm/IR/IntrinsicsAMDGPU.td"
 +include "llvm/IR/IntrinsicsHCU.td"
  include "llvm/IR/IntrinsicsBPF.td"
  include "llvm/IR/IntrinsicsSystemZ.td"
  include "llvm/IR/IntrinsicsWebAssembly.td"
-diff --git a/llvm/lib/IR/Intrinsics.cpp b/llvm/lib/IR/Intrinsics.cpp
---- a/llvm/lib/IR/Intrinsics.cpp
-+++ b/llvm/lib/IR/Intrinsics.cpp
-@@ -15,4 +15,5 @@
- #include "llvm/IR/Function.h"
- #include "llvm/IR/IntrinsicsAArch64.h"
- #include "llvm/IR/IntrinsicsAMDGPU.h"
-+#include "llvm/IR/IntrinsicsHCU.h"
- #include "llvm/IR/IntrinsicsARM.h"
-diff --git a/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td b/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td
---- a/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td
-+++ b/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td
-@@ -3311,3 +3311,5 @@ def ROCDL_TargetAttr : ROCDL_Attr<"Target", "target"> {
-   }];
- }
-+
-+include "mlir/Dialect/LLVMIR/ROCDLHCUOps.td"
- #endif // ROCDLIR_OPS
-diff --git a/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp b/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp
---- a/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp
-+++ b/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp
-@@ -19,2 +19,3 @@
- #include "llvm/IR/IRBuilder.h"
- #include "llvm/IR/IntrinsicsAMDGPU.h"
-+#include "llvm/IR/IntrinsicsHCU.h"
-diff --git a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
---- a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
-+++ b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
-@@ -946,7 +946,11 @@ llvm_target_intrinsics_list = [
-         "name": "AMDGPU",
-         "intrinsic_prefix": "amdgcn",
-     },
-+    {
-+        "name": "HCU",
-+        "intrinsic_prefix": "hcu",
-+    },
-     {
-         "name": "ARM",
-         "intrinsic_prefix": "arm",
-     },
-diff --git a/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel b/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
---- a/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
-+++ b/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
-@@ -6558,6 +6558,9 @@ cc_library(
- td_library(
-     name = "ROCDLOpsTdFiles",
--    srcs = ["include/mlir/Dialect/LLVMIR/ROCDLOps.td"],
-+    srcs = [
-+        "include/mlir/Dialect/LLVMIR/ROCDLHCUOps.td",
-+        "include/mlir/Dialect/LLVMIR/ROCDLOps.td",
-+    ],
-     includes = ["include"],
-     deps = [
-         ":GPUOpsTdFiles",
 diff --git a/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def b/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def
 --- a/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def
 +++ b/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def
-@@ -98,7 +98,13 @@ AMDGCN_GPU      ("gfx908",    GK_GFX908,  ( 9, 0,  8), FEATURE_FAST_FMA_F32|FEA
+@@ -97,7 +97,13 @@ AMDGCN_GPU      ("gfx908",    GK_GFX908,  ( 9, 0,  8), FEATURE_FAST_FMA_F32|FEAT
  AMDGCN_GPU      ("gfx909",    GK_GFX909,  ( 9, 0,  9), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK)
  AMDGCN_GPU      ("gfx90a",    GK_GFX90A,  ( 9, 0, 10), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
  AMDGCN_GPU      ("gfx90c",    GK_GFX90C,  ( 9, 0, 12), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK)
@@ -79,6 +26,17 @@ diff --git a/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def b/llvm/includ
  AMDGCN_GPU      ("gfx950",    GK_GFX950,  ( 9, 5,  0), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
  AMDGCN_GPU      ("gfx1010",   GK_GFX1010, (10, 1,  0), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK|FEATURE_WGP)
  AMDGCN_GPU      ("gfx1011",   GK_GFX1011, (10, 1,  1), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK|FEATURE_WGP)
+diff --git a/llvm/lib/IR/Intrinsics.cpp b/llvm/lib/IR/Intrinsics.cpp
+--- a/llvm/lib/IR/Intrinsics.cpp
++++ b/llvm/lib/IR/Intrinsics.cpp
+@@ -17,6 +17,7 @@
+ #include "llvm/IR/Function.h"
+ #include "llvm/IR/IntrinsicsAArch64.h"
+ #include "llvm/IR/IntrinsicsAMDGPU.h"
++#include "llvm/IR/IntrinsicsHCU.h"
+ #include "llvm/IR/IntrinsicsARM.h"
+ #include "llvm/IR/IntrinsicsBPF.h"
+ #include "llvm/IR/IntrinsicsHexagon.h"
 diff --git a/llvm/lib/Target/AMDGPU/GCNProcessors.td b/llvm/lib/Target/AMDGPU/GCNProcessors.td
 --- a/llvm/lib/Target/AMDGPU/GCNProcessors.td
 +++ b/llvm/lib/Target/AMDGPU/GCNProcessors.td
@@ -117,3 +75,49 @@ diff --git a/llvm/lib/Target/AMDGPU/GCNProcessors.td b/llvm/lib/Target/AMDGPU/GC
  def : ProcessorModel<"gfx950", SIDPGFX950FullSpeedModel,
    FeatureISAVersion9_5_0.Features
  >;
+diff --git a/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td b/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td
+--- a/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td
++++ b/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td
+@@ -3261,4 +3261,6 @@ def ROCDL_TargetAttr :
+     }
+   }];
+ }
++
++include "mlir/Dialect/LLVMIR/ROCDLHCUOps.td"
+ #endif // ROCDLIR_OPS
+diff --git a/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp b/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp
+--- a/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp
++++ b/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp
+@@ -18,6 +18,7 @@
+ #include "mlir/Target/LLVMIR/ModuleTranslation.h"
+ 
+ #include "llvm/IR/IRBuilder.h"
++#include "llvm/IR/IntrinsicsHCU.h"
+ #include "llvm/IR/IntrinsicsAMDGPU.h"
+ #include "llvm/Support/raw_ostream.h"
+ 
+diff --git a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
+--- a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
++++ b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
+@@ -1011,6 +1011,10 @@ llvm_target_intrinsics_list = [
+         "name": "AMDGPU",
+         "intrinsic_prefix": "amdgcn",
+     },
++    {
++        "name": "HCU",
++        "intrinsic_prefix": "hcu",
++    },
+     {
+         "name": "ARM",
+         "intrinsic_prefix": "arm",
+diff --git a/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel b/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
+--- a/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
++++ b/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
+@@ -6651,6 +6651,7 @@ td_library(
+         "include/mlir/Dialect/LLVMIR/ROCDLAttrs.td",
+         "include/mlir/Dialect/LLVMIR/ROCDLDialect.td",
+         "include/mlir/Dialect/LLVMIR/ROCDLEnums.td",
++        "include/mlir/Dialect/LLVMIR/ROCDLHCUOps.td",
+         "include/mlir/Dialect/LLVMIR/ROCDLOps.td",
+     ],
+     includes = ["include"],
