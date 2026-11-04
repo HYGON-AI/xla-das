@@ -22,6 +22,7 @@ limitations under the License.
 #include <optional>
 #include <variant>
 
+#include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/log.h"
@@ -37,12 +38,11 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/tpu/c_api_decl.h"
-#include "xla/stream_executor/tpu/tpu_executor_c_api.h"
 #include "xla/stream_executor/tpu/tpu_executor_interface.h"
 #include "xla/stream_executor/tpu/tpu_platform.h"
 #include "xla/stream_executor/tpu/tpu_platform_interface.h"
-#include "xla/stream_executor/tpu/tpu_topology.h"
+#include "xla/tpu/c_api_decl.h"
+#include "xla/tpu/tpu_topology.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/platform/types.h"
@@ -141,7 +141,7 @@ class TpuExecutor : public tensorflow::tpu::TpuExecutorInterface {
 
  private:
   tensorflow::tpu::TpuPlatform& tpu_platform() {
-    return *(tensorflow::down_cast<tensorflow::tpu::TpuPlatform*>(platform_));
+    return *(absl::down_cast<tensorflow::tpu::TpuPlatform*>(platform_));
   }
 
   tensorflow::tpu::TpuPlatform::StreamMap& stream_map() {

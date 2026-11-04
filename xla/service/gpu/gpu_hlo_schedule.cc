@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/transforms/collectives/async_collective_annotator.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
@@ -55,7 +56,6 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/layout.h"
-#include "xla/printer.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -66,6 +66,7 @@ limitations under the License.
 #include "xla/service/gpu/model/analytical_latency_estimator.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/sol_latency_estimator.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/service/legalize_scheduling_annotations.h"
@@ -78,9 +79,11 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -450,21 +453,14 @@ absl::Status RunP2PSchedulePreparation(HloModule* module) {
 //
 // Returns said fingerprint.
 std::string TagWithFingerprint(HloModule* module) {
-  // Use HighwayHashPrinter to compute the fingerprint by streaming HLO text
-  // directly into the hasher, avoiding materialization of the full module text
-  // as a string. For large modules this avoids multi-GB string allocations.
-  HighwayHashPrinter printer;
-  module->Print(&printer, HloPrintOptions::Canonical()
-                              .set_print_backend_config(true)
-                              // The backend config can be a json string,
-                              // and the order of keys in json is not
-                              // guaranteed. So we need to sort the keys
-                              // to make the fingerprint deterministic.
-                              .set_sort_backend_config(true));
-  tsl::Fprint128 fp128 = printer.ToFingerprint128();
   std::string fingerprint =
-      absl::StrCat(absl::Hex(fp128.low64, absl::kZeroPad16),
-                   absl::Hex(fp128.high64, absl::kZeroPad16));
+      module->GetFingerprint128(HloPrintOptions::Canonical()
+                                    .set_print_backend_config(true)
+                                    // The backend config can be a json string,
+                                    // and the order of keys in json is not
+                                    // guaranteed. So we need to sort the keys
+                                    // to make the fingerprint deterministic.
+                                    .set_sort_backend_config(true));
   module->add_frontend_attribute(std::string(kFingerprintBeforeLHS),
                                  fingerprint);
   VLOG(1) << "Fingerprint before LHS for module " << module->name() << "("
@@ -489,9 +485,39 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
       ReadPGLEProfile(module.config(), fingerprint);
 
   if (profile.has_value()) {
+    std::unique_ptr<LatencyEstimator> base_estimator;
+    if (SolLatencyEstimator::IsSupportedForModule(module, gpu_device_info)) {
+      auto cost_analysis =
+          std::make_unique<GpuHloCostAnalysis>(GpuHloCostAnalysis::Options{
+              ShapeSizeBytesFunction(pointer_size),
+              /*per_second_rates=*/{},
+              /*min_latencies_seconds=*/{},
+              /*count_multiple_input_accesses=*/true,
+          });
+      if (absl::Status status =
+              module.entry_computation()->Accept(cost_analysis.get());
+          status.ok()) {
+        auto sol = SolLatencyEstimator::Create(
+            config, std::move(gpu_latency_estimator), gpu_device_info,
+            ShapeSizeBytesFunction(pointer_size), module.entry_computation(),
+            std::move(cost_analysis));
+        if (sol.ok()) {
+          base_estimator = std::move(*sol);
+          VLOG(1) << "PGLE fallback: using SolLatencyEstimator";
+        } else {
+          base_estimator = std::make_unique<GpuLatencyEstimator>(pointer_size);
+          VLOG(1) << "PGLE fallback: using GpuLatencyEstimator (T-shirt sizes),"
+                  << " SolLatencyEstimator creation failed: " << sol.status();
+        }
+      }
+    }
+    if (base_estimator == nullptr) {
+      base_estimator = std::move(gpu_latency_estimator);
+      VLOG(1) << "PGLE fallback: using GpuLatencyEstimator (T-shirt sizes)";
+    }
     auto aggregator = std::make_unique<GPUProfileStatisticsAggregator>();
     auto pg_latency_estimator = std::make_unique<ProfileGuidedLatencyEstimator>(
-        config, std::move(gpu_latency_estimator), profile.value(),
+        config, std::move(base_estimator), profile.value(),
         std::move(aggregator));
     LOG(INFO) << "Found profile for module " << module.name()
               << ", using profile guided latency estimator";
@@ -503,8 +529,7 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
     VLOG(1) << "Using analytical latency estimator";
     return std::make_unique<AnalyticalLatencyEstimator>(
         config, std::move(gpu_latency_estimator), gpu_device_info,
-        ShapeSizeBytesFunction(pointer_size), module.entry_computation(),
-        mlir_context);
+        ShapeSizeBytesFunction(pointer_size), module.entry_computation());
   }
 
   if (SolLatencyEstimator::IsSupportedForModule(module, gpu_device_info)) {
@@ -527,7 +552,7 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
     auto sol_latency_estimator = SolLatencyEstimator::Create(
         config, std::move(gpu_latency_estimator), gpu_device_info,
         ShapeSizeBytesFunction(pointer_size), module.entry_computation(),
-        mlir_context, std::move(cost_analysis));
+        std::move(cost_analysis));
     if (sol_latency_estimator.ok()) {
       return std::move(*sol_latency_estimator);
     }
@@ -650,13 +675,11 @@ absl::Status RunLatencyHidingSchedulerPasses(
     pipeline.AddPass<PGLEAccuracyChecker>(
         dynamic_cast<ProfileGuidedLatencyEstimator&>(*estimator));
   }
-  // If overlap limit is set to be greater than 1 and the default t-short size
-  // estimator is used we will tell LHS to extend async-done intervals as much
-  // as possible to start collectives as early as possible.
-  bool prioritize_compute_over_async_start = false;
-  if (config.parallel_collective_overlap_limit > 1) {
-    prioritize_compute_over_async_start = true;
-  }
+  // It's more beneficial to prioritize compute over async start when we have
+  // more async ops in parallel.
+  bool prioritize_compute_over_async_start =
+      config.parallel_collective_overlap_limit > 1 &&
+      options.xla_gpu_experimental_collective_start_as_early_as_possible();
   auto async_tracker = std::make_unique<GpuAsyncTracker>(config);
 
   std::shared_ptr<const SchedulingContext> scheduling_context =
@@ -868,13 +891,12 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   // Run the scheduler which minimizes peak memory usage.
   // We need to run it anyway because LHS relies on it.
   // See `xla::LatencyHidingScheduler::Run`.
-  TF_RETURN_IF_ERROR(RunP2PSchedulePreparation(module));
+  RETURN_IF_ERROR(RunP2PSchedulePreparation(module));
   int64_t peak_memory_bytes;
-  TF_ASSIGN_OR_RETURN(
-      HloSchedule schedule,
-      ScheduleGpuModuleWithMemoryScheduler(module, alias_info, pointer_size,
-                                           &peak_memory_bytes));
-  TF_RETURN_IF_ERROR(module->set_schedule(std::move(schedule)));
+  ASSIGN_OR_RETURN(HloSchedule schedule,
+                   ScheduleGpuModuleWithMemoryScheduler(
+                       module, alias_info, pointer_size, &peak_memory_bytes));
+  RETURN_IF_ERROR(module->set_schedule(std::move(schedule)));
 
   bool enable_latency_hiding_scheduler =
       IsLHSEnabled(*module, fingerprint, gpu_device_info);
@@ -882,7 +904,7 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   // Run Latency Hiding Scheduler (LHS). It maximizes the compute-communication
   // overlap, potentially at the cost of memory usage.
   if (enable_latency_hiding_scheduler) {
-    TF_RETURN_IF_ERROR(RunLatencyHidingSchedulerPasses(
+    RETURN_IF_ERROR(RunLatencyHidingSchedulerPasses(
         module, pointer_size, fingerprint, memory_limit, gpu_device_info,
         mlir_context, alias_info));
   }

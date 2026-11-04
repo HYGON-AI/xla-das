@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/hlo/analysis/symbolic_expr.h"
 
 #include <cstdint>
+#include <limits>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -63,9 +65,9 @@ TEST_F(SymbolicExprTest, CreateAndPrint) {
   SymbolicExpr expr = (((v0 + 42) * v1.min(2).max(0)) / 2).ceilDiv(2);
 
   ASSERT_NE(expr, nullptr);
-  EXPECT_THAT(expr.ToString(),
-              MatchIndexingString(
-                  "(((v0 + 42) * max(min(v1, 2), 0)) floordiv 2) ceildiv 2"));
+  EXPECT_THAT(
+      expr.ToString(),
+      MatchIndexingString("(((v0 + 42) * max(min(v1, 2), 0)) / 2) ceildiv 2"));
 }
 
 TEST_F(SymbolicExprTest, PrintWithVariableNames) {
@@ -100,6 +102,24 @@ TEST_F(SymbolicExprTest, Evaluate) {
 
   // ((((5 + 42) * max(min(1, 2), 0)) / 2) ceildiv 2) = 23 ceildiv 2 = 12
   EXPECT_EQ(expr.Evaluate({5, 1}), 12);
+}
+
+TEST_F(SymbolicExprTest, SafeEvaluate) {
+  SymbolicExpr expr = (((v0 + 42) * v1.min(2).max(0)) / 2).ceilDiv(2);
+
+  // Normal execution.
+  EXPECT_EQ(SafeEvaluateSymbolicExpr(expr, {5}, {1}),
+            std::optional<int64_t>(12));
+
+  // Division by zero.
+  SymbolicExpr div_by_zero = v0 / 0;
+  EXPECT_EQ(SafeEvaluateSymbolicExpr(div_by_zero, {5}, {}), std::nullopt);
+
+  // Overflow in multiplication.
+  SymbolicExpr overflow_mul = v0 * 2;
+  EXPECT_EQ(SafeEvaluateSymbolicExpr(overflow_mul,
+                                     {std::numeric_limits<int64_t>::max()}, {}),
+            std::nullopt);
 }
 
 TEST_F(SymbolicExprTest, Evaluate_Invalid) {
@@ -327,6 +347,9 @@ TEST_F(SymbolicExprTest, Canonicalization_Basic) {
   EXPECT_EQ(add_associativity_and_commutativity.Canonicalize().ToString(),
             "v0 * 2 + v1 * 2");
 
+  SymbolicExpr mul_constants_to_right = v0 * 2 * v1;
+  EXPECT_EQ(mul_constants_to_right.Canonicalize().ToString(), "v0 * v1 * 2");
+
   SymbolicExpr complex_expression = ((v1 * 2) + 5) + ((v0 - v1) * 3);
   EXPECT_EQ(complex_expression.Canonicalize().ToString(), "v0 * 3 - v1 + 5");
 
@@ -373,7 +396,7 @@ TEST_F(SymbolicExprTest, Canonicalization_DivMod) {
 
   // Test ceilDiv with negative divisor.
   EXPECT_EQ((v0.ceilDiv(-1)).Canonicalize().ToString(), "-v0");
-  EXPECT_EQ((v0.ceilDiv(-2)).Canonicalize().ToString(), "-(v0 floordiv 2)");
+  EXPECT_EQ((v0.ceilDiv(-2)).Canonicalize().ToString(), "-(v0 / 2)");
   EXPECT_EQ(((v0 * 6).floorDiv(-3)).Canonicalize().ToString(), "v0 * -2");
   EXPECT_EQ(((v0 * 6).ceilDiv(-3)).Canonicalize().ToString(), "v0 * -2");
 }

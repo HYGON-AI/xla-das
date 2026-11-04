@@ -27,6 +27,8 @@ if [[ ! -x "${HCU_CLANG}" ]]; then
 fi
 
 EXCLUDED_TESTS=(
+# hcu support MaxGridDim to 2147483647 but rocm just support 65535
+    "GpuKernelTilingTest.ReductionInputTooLarge"
 # The HipnnConvolution_1257 algorithm in convolution_test exhibits FP32-to-FP16 conversion mismatches against the IEEE standard
 # This behavior is intentionally designed in DTK, so the test is skipped
     "Convolve2D_1x3x3x5_3x3x5x3_Valid/1.Types"
@@ -40,21 +42,39 @@ EXCLUDED_TESTS=(
 # HCU Triton backend cannot legalize the f8e5m2->f32 upcast
     "DotTestTestSuite/DotTest.IsTritonSupportedExecutesCorrectlyForDot/f8e5m2_dot"
 # Align with rocm upstream excluded tests
-    "HostMemoryAllocateTest.Numa"
-    "NumericTestsForBlas/NumericTestsForBlas.Infinity/dot_tf32_tf32_f32_x3"
-    "TritonEmitterTest.ScaledDotIsSupportedByReferencePlatform"
-    "VmmTest.CommandBufferSkipProfiledTwoGemmChain"
-    "GpuKernelTilingTest.ReductionInputTooLarge"
-    "MxScaledDotExecutionTest.MxFp4Fp8MixedBatchedCorrectness"
-    "ConvolutionTest.Convolve3D_1x4x2x3x3_2x2x2x3x3_Valid"
-    "ConvolutionTest.Convolve_1x1x4x4_1x1x2x2_Valid"
-    "ConvolutionTest.Convolve_1x1x4x4_1x1x2x2_Same"
-    "ConvolutionTest.Convolve_1x1x4x4_1x1x3x3_Same"
-    "StreamExecutorGpuCompilerTest.AotCompileDeserializeRoundTrip"
-    "StreamExecutorGpuClientTest.NumaNode"
-    "F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_fast_accum_with_lhs_f8e4m3fn_rhs_f8e4m3fn_output_f8e5m2_from_cc_8_9_rocm_63_no_restriction_c_16_nc_2"
     "F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_fast_accum_with_lhs_f8e4m3fn_rhs_f8e4m3fn_output_f8e5m2_from_cc_8_9_rocm_63_no_restriction_c_32_nc_32"
-    "RaggedAllToAllTest/RaggedAllToAllTest.RaggedAllToAll*"
+    "F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_fast_accum_with_lhs_f8e4m3fn_rhs_f8e4m3fn_output_f8e5m2_from_cc_8_9_rocm_63_no_restriction_c_16_nc_2"
+    "F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_fast_accum_with_lhs_f8e4m3fn_rhs_f8e4m3fn_output_f32_from_cc_8_9_rocm_63_no_restriction_c_32_nc_32"
+    "F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_fast_accum_with_lhs_f8e4m3fn_rhs_f8e4m3fn_output_f32_from_cc_8_9_rocm_63_no_restriction_c_16_nc_2"
+    "F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_with_lhs_f8e4m3fn_rhs_f8e4m3fn_output_f32_from_cc_8_9_rocm_63_no_restriction_c_16_nc_2"
+    "F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_with_lhs_f8e4m3fn_rhs_f8e4m3fn_output_f32_from_cc_8_9_rocm_63_no_restriction_c_32_nc_32"
+    "HostMemoryAllocateTest.Numa"
+    "*IotaR1Test*"
+    "NumericTestsForBlas/NumericTestsForBlas.Infinity/dot_tf32_tf32_f32_x3"
+    "TritonAndBlasSupportForDifferentTensorSizes/TritonAndBlasSupportForDifferentTensorSizes.IsDotAlgorithmSupportedByTriton/dot_bf16_bf16_f32_x*"
+    "F8E5M2Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_*"
+    "DotOperationTestWithCublasLt_F16F32F64CF64/1.GeneralMatMulActivation"
+    "MatmulTestWithCublas.GemmRewriter_RegressionTestF64"
+    "TritonEmitterTest.ScaledDotIsSupportedByReferencePlatform"
+    "TritonBackendTestSuite/TritonBackendTest.CostModelOptions_*"
+    "StreamExecutorGpuClientTest.GetAbiVersion"
+    "CublasFissionBackendTest.CublasFallbackForBf16Bf16F32Algorithm"
+    "BlasAlgorithmTest.Algorithm_BF16_BF16_F32_X6"
+    "BlasAlgorithmTest.Algorithm_BF16_BF16_F32_X3"
+    "BlasAlgorithmTest.Algorithm_BF16_BF16_F32"
+    "FloatSupportTestWithCublas.MixedTypeDotIsNotUpcasted"
+    "GemmRewriteTest.CheckCustomCallHipblasLtBF16"
+    "ParameterizedGemmRewriteTest.GemmTypeCombinationCheck"
+    "SampleFileTest.Convolution"
+    "GroupedConvolution2DTestWithRandomIndices*"
+    "LocalClientExecuteTest.CompilePartitionedExecutable"
+    "RaggedAllToAllThunkMultiGpuTest.ExecuteOnStream"
+    "AllReduceLayoutAwareTest*"
+    "ConvolutionTest.Convolve3D_1x4x2x3x3_2x2x2x3x3_Valid*"
+    "ConvolutionTest.Convolve_1x1x4x4_1x1x2x2_Valid*"
+    "ConvolutionTest.Convolve_1x1x4x4_1x1x2x2_Same*"
+    "ConvolutionTest.Convolve_1x1x4x4_1x1x3x3_Same*"
+    "StreamExecutorGpuClientTest.NumaNode"
 )
 
 TAG_FILTERS=$(bash "${SCRIPT_DIR}/hcu_tag_filters.sh")

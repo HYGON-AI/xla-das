@@ -91,9 +91,10 @@ class SyclExecutor : public gpu::GpuExecutor {
   absl::StatusOr<std::unique_ptr<EventBasedTimer>> CreateEventBasedTimer(
       Stream* stream, bool use_delay_kernel) override;
 
-  // Sets the specified device memory to zero synchronously.
-  absl::Status SynchronousMemZero(DeviceMemoryBase* location,
-                                  uint64_t size) override;
+  // Returns the device address for the given symbol in the specified module. If
+  // the symbol is not found, returns a NotFound error.
+  absl::StatusOr<DeviceAddressBase> GetSymbol(
+      const std::string& symbol_name, ModuleHandle module_handle) override;
 
   // Copies memory from host to device synchronously.
   absl::Status SynchronousMemcpy(DeviceMemoryBase* gpu_dst,

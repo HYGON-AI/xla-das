@@ -24,14 +24,15 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 namespace {
@@ -43,6 +44,9 @@ class TestThunk : public Thunk {
       : Thunk(Thunk::kAllReduce, std::move(thunk_info)) {}
   absl::Status ExecuteOnStream(const ExecuteParams&) override {
     return absl::OkStatus();
+  }
+  absl::StatusOr<ThunkProto> ToProto() const override {
+    return absl::UnimplementedError("TestThunk::ToProto is not implemented");
   }
 };
 
@@ -65,7 +69,7 @@ TEST(AsyncExecutionTest, InitializeStartDone) {
   thunk_info.profile_annotation = "test-thunk";
   TestThunk thunk(thunk_info);
 
-  AsyncExecution async_execution(&thunk);
+  AsyncExecution async_execution(thunk_info);
   Thunk::ExecutionScopedState state;
 
   // Initialize creates an event in the execution scoped state.
@@ -90,7 +94,7 @@ TEST(AsyncExecutionTest, DoneWithoutStartFails) {
   thunk_info.profile_annotation = "test-thunk";
   TestThunk thunk(thunk_info);
 
-  AsyncExecution async_execution(&thunk);
+  AsyncExecution async_execution(thunk_info);
   Thunk::ExecutionScopedState state;
 
   // Done without Initialize should fail because event is not in state.

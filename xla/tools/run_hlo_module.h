@@ -22,6 +22,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -58,6 +59,7 @@ struct RunHloModuleOptions {
   bool random_init_input_literals{true};
   bool force_fake_data{false};
   bool isolate_instructions{false};
+  int64_t execution_seed{0};
 };
 
 // Runs test_module on the platform with the name

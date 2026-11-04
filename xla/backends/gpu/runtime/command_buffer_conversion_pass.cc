@@ -30,11 +30,13 @@ limitations under the License.
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
@@ -42,7 +44,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
-#include "xla/backends/gpu/runtime/dynamic_memcpy_thunk.h"
+#include "xla/backends/gpu/runtime/dynamic_slice_fusion_v2_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
@@ -59,7 +61,6 @@ limitations under the License.
 #include "tsl/platform/platform.h"
 #include "tsl/profiler/lib/profiler_lock.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -81,15 +82,18 @@ CommandBufferConfig GetCommandBufferConfig(
     num_local_devices = hlo_module->config().partition_size();
   }
 
-  CommandBufferConfig config{std::move(commands), device_info,
-                             num_local_devices};
+  CommandBufferConfig config{
+      std::move(commands), device_info,
+      debug_options.xla_gpu_command_buffer_update_mode(),
+      debug_options.xla_gpu_command_buffer_unroll_loops(), num_local_devices};
 
   // Erase command buffer cmd types that are not supported by the gpu runtime.
   static constexpr auto kRequireConditionals = {DebugOptions::CONDITIONAL,
                                                 DebugOptions::WHILE};
   static constexpr auto kRequireTracing = {
-      DebugOptions::CUBLAS, DebugOptions::CUBLASLT, DebugOptions::CUDNN,
-      DebugOptions::CUSTOM_CALL, DebugOptions::COLLECTIVES};
+      DebugOptions::CUBLAS,      DebugOptions::CUBLASLT,
+      DebugOptions::CUDNN,       DebugOptions::CUSTOM_CALL,
+      DebugOptions::COLLECTIVES, DebugOptions::CONVOLUTION};
 
   auto erase = [&](absl::Span<const DebugOptions::CommandBufferCmdType> cmds) {
     for (auto cmd : cmds) {
@@ -132,9 +136,7 @@ std::optional<DebugOptions::CommandBufferCmdType> GetCommandBufferCmdType(
   auto kind = thunk.kind();
   switch (kind) {
     case Thunk::kCopy:
-      if (dynamic_cast<const DynamicMemcpyThunk*>(&thunk)) {
-        return DebugOptions::DYNAMIC_SLICE_COPY_FUSION;
-      } else if (dynamic_cast<const DeviceToDeviceCopyThunk*>(&thunk)) {
+      if (dynamic_cast<const DeviceToDeviceCopyThunk*>(&thunk)) {
         return DebugOptions::FUSION;
       } else {
         // Only copy within the same device can be converted to command buffers.
@@ -164,11 +166,15 @@ std::optional<DebugOptions::CommandBufferCmdType> GetCommandBufferCmdType(
       return DebugOptions::COLLECTIVES;
     case Thunk::kCuDnn:
       return DebugOptions::CUDNN;
+    case Thunk::kConvolution:
+      return DebugOptions::CONVOLUTION;
     case Thunk::kCustomCall:
       return DebugOptions::CUSTOM_CALL;
     case Thunk::kCublasLtMatmul:
       return DebugOptions::CUBLASLT;
     case Thunk::kDynamicSlice:
+      return DebugOptions::DYNAMIC_SLICE_FUSION;
+    case Thunk::kDynamicSliceFusion:
       return DebugOptions::DYNAMIC_SLICE_FUSION;
     default:
       VLOG(2) << "Unsupported thunk kind: " << Thunk::KindToString(kind);
@@ -181,11 +187,47 @@ bool ThunkSequenceIsConvertible(const ThunkSequence& thunks,
 size_t CheckAsyncRegion(absl::Span<const std::unique_ptr<Thunk>> thunks,
                         const CommandBufferConfig& config);
 
+bool SupportsMovedChildCommands(const se::DeviceDescription& device_info) {
+  const auto* cuda_cc =
+      device_info.gpu_compute_capability().cuda_compute_capability();
+  if (cuda_cc == nullptr) {
+    return false;
+  }
+  return std::min({device_info.runtime_version(), device_info.driver_version(),
+                   device_info.compile_time_toolkit_version()}) >=
+         se::SemanticVersion{12, 9, 0};
+}
+
+bool HasLoopDependentDynamicSliceFusionV2(const ThunkSequence& thunks) {
+  bool has_loop_dependent_dsf = false;
+  for (const std::unique_ptr<Thunk>& thunk : thunks) {
+    if (has_loop_dependent_dsf) {
+      break;
+    }
+    thunk->Walk([&](const Thunk* nested) {
+      if (const auto* dsf =
+              dynamic_cast<const DynamicSliceFusionV2Thunk*>(nested);
+          dsf != nullptr && dsf->HasLoopDependentOffsets()) {
+        has_loop_dependent_dsf = true;
+      }
+    });
+  }
+  return has_loop_dependent_dsf;
+}
+
 // Returns true if the WhileThunk is convertible to a command buffer operation.
 // This requires that all thunks in both the condition and body sequences are
 // convertible.
 bool IsConvertible(const WhileThunk& while_thunk,
                    const CommandBufferConfig& config) {
+  if (HasLoopDependentDynamicSliceFusionV2(
+          while_thunk.body_executor().thunks()) &&
+      !(config.enable_loop_unroll && while_thunk.trip_count().has_value())) {
+    VLOG(2) << "WhileThunk is not convertible to command buffers because its "
+               "body contains loop-dependent DynamicSliceFusionV2Thunk and "
+               "the while loop will not be unrolled";
+    return false;
+  }
   return ThunkSequenceIsConvertible(while_thunk.body_executor().thunks(),
                                     config) &&
          ThunkSequenceIsConvertible(while_thunk.condition_executor().thunks(),
@@ -204,8 +246,8 @@ bool IsConvertible(const ConditionalThunk& conditional_thunk,
 }
 
 // Returns true if the CustomCallThunk is convertible to a command buffer
-// operation. Checks if the custom call target is in the legacy allowlist or if
-// the registered FFI handler is compatible with command buffers.
+// operation. Checks if the registered FFI handler is compatible with command
+// buffers.
 bool IsConvertible(const CustomCallThunk& custom_call_thunk,
                    const CommandBufferConfig& config) {
   const std::string& target_name = custom_call_thunk.target_name();
@@ -266,6 +308,33 @@ static bool IsConvertible(const DynamicSliceThunk& dynamic_slice_thunk,
       dynamic_slice_thunk.get_embedded_executor().thunks(), config);
 }
 
+// Returns true if the DynamicSliceFusionV2Thunk is convertible to a command
+// buffer operation. Runtime offset verification performs synchronous D2H copies
+// and is intentionally unsupported for command buffer lowering.
+static bool IsConvertible(
+    const DynamicSliceFusionV2Thunk& dynamic_slice_fusion_thunk,
+    const CommandBufferConfig& config) {
+  if (!SupportsMovedChildCommands(config.device_description)) {
+    VLOG(2) << "DynamicSliceFusionV2Thunk is not convertible to command "
+               "buffers because child command nodes require CUDA 12.9+";
+    return false;
+  }
+  if (dynamic_slice_fusion_thunk.verify_offsets()) {
+    VLOG(2) << "DynamicSliceFusionV2Thunk is not convertible to command "
+               "buffers because runtime offset verification is enabled";
+    return false;
+  }
+  if (config.update_mode == DebugOptions::NEVER_UPDATE &&
+      dynamic_slice_fusion_thunk.HasLoopDependentOffsets()) {
+    VLOG(2) << "DynamicSliceFusionV2Thunk is not convertible in NEVER_UPDATE "
+               "command-buffer mode because its offsets depend on loop "
+               "iteration";
+    return false;
+  }
+  return ThunkSequenceIsConvertible(dynamic_slice_fusion_thunk.thunks(),
+                                    config);
+}
+
 // Returns true if the AsyncStartThunk is convertible to a command buffer
 // operation. This requires that all nested thunks are convertible.
 static bool IsConvertible(const AsyncStartThunk& async_start_thunk,
@@ -307,11 +376,20 @@ bool IsConvertible(const Thunk& thunk, const CommandBufferConfig& config) {
   }
 
   if (thunk.kind() == Thunk::kCustomCall) {
-    return IsConvertible(static_cast<const CustomCallThunk&>(thunk), config);
+    if (auto* ffi_thunk = dynamic_cast<const CustomCallThunk*>(&thunk)) {
+      return IsConvertible(*ffi_thunk, config);
+    }
+    // Legacy custom calls are not command-buffer compatible.
+    return false;
   }
 
   if (thunk.kind() == Thunk::kDynamicSlice) {
     return IsConvertible(static_cast<const DynamicSliceThunk&>(thunk), config);
+  }
+
+  if (thunk.kind() == Thunk::kDynamicSliceFusion) {
+    return IsConvertible(static_cast<const DynamicSliceFusionV2Thunk&>(thunk),
+                         config);
   }
 
   if (thunk.kind() == Thunk::kRaggedAllToAll) {

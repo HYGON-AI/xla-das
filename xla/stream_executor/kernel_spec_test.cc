@@ -92,6 +92,28 @@ TEST(KernelLoaderSpec, OwningCudaCubin) {
   EXPECT_THAT(spec.kernel_name(), "kernel24");
 }
 
+TEST(KernelLoaderSpec, OwningCudaCubinInternsData) {
+  const std::vector<uint8_t> data = {0x11, 0x22, 0x33, 0x44, 0x55,
+                                     0x66, 0x77, 0x88, 0x99, 0xAA};
+
+  auto spec1 = KernelLoaderSpec::CreateOwningCudaCubinInMemorySpec(
+      data, "kernel_a", /*arity=*/1);
+  auto spec2 = KernelLoaderSpec::CreateOwningCudaCubinInMemorySpec(
+      std::vector(data), "kernel_b", /*arity=*/2);
+
+  ASSERT_THAT(spec1.cuda_cubin_in_memory(),
+              Optional(Field(&CudaCubinInMemory::cubin_bytes, data)));
+  ASSERT_THAT(spec2.cuda_cubin_in_memory(),
+              Optional(Field(&CudaCubinInMemory::cubin_bytes, data)));
+
+  const uint8_t* cubin_data1 = spec1.cuda_cubin_in_memory()->cubin_bytes.data();
+  const uint8_t* cubin_data2 = spec2.cuda_cubin_in_memory()->cubin_bytes.data();
+
+  // Two specs created from identical bytes share a single interned buffer.
+  EXPECT_EQ(cubin_data1, cubin_data2);
+  EXPECT_NE(cubin_data1, data.data());
+}
+
 TEST(KernelLoaderSpec, CudaPtx) {
   static constexpr absl::string_view kPtxData = "PTX DEADBEEF";
   auto spec = KernelLoaderSpec::CreateCudaPtxInMemorySpec(kPtxData, "kernel24",
@@ -179,8 +201,7 @@ TEST(KernelLoaderSpec, InProcessSymbolFromProto) {
     arity: 42
     kernel_args_packing_spec {
       kernel_arguments {
-        relocations { kind: KIND_BITS64_ABSOLUTE argument_index: 0 offset: 0 }
-        data: "\x00\x00\x00\x00\x00\x00\x00\x00"
+        relocations { kind: KIND_BITS64_ABSOLUTE argument_index: 0 }
       }
       kernel_arguments { data: "\x34\x12\x00\x00" }
     }
@@ -204,8 +225,7 @@ TEST(KernelLoaderSpec, InProcessSymbolFromProto) {
   const auto kReferenceKernelArgsPackingSpecProto =
       R"pb(
     kernel_arguments {
-      relocations { kind: KIND_BITS64_ABSOLUTE argument_index: 0 offset: 0 }
-      data: "\x00\x00\x00\x00\x00\x00\x00\x00"
+      relocations { kind: KIND_BITS64_ABSOLUTE argument_index: 0 }
     }
     kernel_arguments { data: "\x34\x12\x00\x00" }
       )pb";
@@ -246,9 +266,7 @@ TEST(kernelLoaderSpec, StoresKernelArgsPackingSpec) {
               relocations {
                 kind: KIND_BITS64_ABSOLUTE
                 argument_index: 0
-                offset: 0
               }
-              data: "\x00\x00\x00\x00\x00\x00\x00\x00"
             }
             kernel_arguments { data: "\x34\x12\x00\x00" }
           )pb");
@@ -270,9 +288,7 @@ TEST(kernelLoaderSpec, StoresKernelArgsPackingSpec) {
                     relocations {
                       kind: KIND_BITS64_ABSOLUTE
                       argument_index: 0
-                      offset: 0
                     }
-                    data: "\x00\x00\x00\x00\x00\x00\x00\x00"
                   }
                   kernel_arguments { data: "\x34\x12\x00\x00" }
                 }

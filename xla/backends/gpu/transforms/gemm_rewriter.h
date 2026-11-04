@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2019 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +18,8 @@ limitations under the License.
 ==============================================================================*/
 #ifndef XLA_BACKENDS_GPU_TRANSFORMS_GEMM_REWRITER_H_
 #define XLA_BACKENDS_GPU_TRANSFORMS_GEMM_REWRITER_H_
+
+#include <optional>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
@@ -73,9 +79,10 @@ struct GemmRewriterOptions {
   enum class BiasMode { kBias, kNoBias };
   BiasMode bias_mode = BiasMode::kBias;
 
-  // Enables the use of cublasLt for non-FP8 GEMMs.
-  // FP8 GEMMs are always rewritten to use cublasLt.
-  bool enable_cublaslt = false;
+  // Overrides `--xla_gpu_enable_cublaslt` for this pass when set. The autotuner
+  // uses it to build pipelines that must force BLASLt on or off, independently
+  // of the flag that governs the main compilation pipeline.
+  std::optional<bool> enable_cublaslt;
 };
 
 class GemmRewriter : public HloModulePass {

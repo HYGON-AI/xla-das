@@ -83,12 +83,20 @@ TEST_F(SymbolicMapSerializationTest, PrintSymbolicExprOperatorPrecedence) {
 
 TEST_F(SymbolicMapSerializationTest, ParseSymbolicExprAndPrint) {
   const std::string kStringContainingAllOperators =
-      "((((v0 + 42) * max(min(v1, 2), 0)) floordiv 2) ceildiv 2) mod 5";
+      "((((v0 + 42) * max(min(v1, 2), 0)) / 2) ceildiv 2) mod 5";
   SymbolicExpr parsed_expr =
       ParseSymbolicExpr(kStringContainingAllOperators, &ctx);
   ASSERT_NE(parsed_expr, nullptr);
   EXPECT_THAT(parsed_expr.ToString(),
               MatchIndexingString(kStringContainingAllOperators));
+}
+
+TEST_F(SymbolicMapSerializationTest, ParseSymbolicExprUnaryMinus) {
+  SymbolicExpr parsed_expr = ParseSymbolicExpr("-v0", &ctx);
+  EXPECT_THAT(parsed_expr.ToString(), MatchIndexingString("-v0"));
+
+  SymbolicExpr parsed_expr_complex = ParseSymbolicExpr("-(v0 + 1)", &ctx);
+  EXPECT_THAT(parsed_expr_complex.ToString(), MatchIndexingString("-v0 - 1"));
 }
 
 TEST_F(SymbolicMapSerializationTest, ParseSymbolicExprAndPrint_Invalid) {

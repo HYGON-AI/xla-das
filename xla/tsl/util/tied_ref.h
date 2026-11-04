@@ -41,6 +41,12 @@ class Tied;
 // while the Tied<T> container is still alive, the tied value is eagerly
 // released — there is no need to wait for the container to be destroyed.
 //
+// A caller can also reclaim ownership of a tied value by calling Untie() on
+// an rvalue TiedRef (i.e. std::move(ref).Untie()). This detaches the value
+// from the container and returns it as a shared_ptr that the caller owns
+// independently. Not exclusively though! Because shared pointers from earlier
+// calls to Lock() might still be alive!
+//
 // Example:
 //
 //   class Session : private Tied<Connection> {
@@ -81,6 +87,10 @@ class TiedRef {
   // Returns a shared_ptr to the tied value if both the TiedRef and the Tied<T>
   // container are still alive, or nullptr otherwise.
   std::shared_ptr<T> Lock() const;
+
+  // Unties the value from the Tied<T> container and returns ownership to the
+  // caller. Returns nullptr if the TiedRef was already expired.
+  std::shared_ptr<T> Untie() &&;
 
   // Returns true if the Tied<T> container has been destroyed.
   bool Expired() const;
@@ -214,13 +224,24 @@ std::shared_ptr<T> TiedRef<T>::Lock() const {
 }
 
 template <typename T>
+std::shared_ptr<T> TiedRef<T>::Untie() && {
+  std::shared_ptr<T> result;
+  if (auto locked = ptr_.lock()) {
+    result = std::move(*locked);
+    locked->reset();
+  }
+  ptr_.reset();
+  return result;
+}
+
+template <typename T>
 bool TiedRef<T>::Expired() const {
   return ptr_.expired();
 }
 
 template <typename T>
 TiedRef<T> Tied<T>::Tie(std::unique_ptr<T> value) {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
 
   // Lazy garbage collection: erase entries whose inner shared_ptr was reset
   // by a TiedRef destructor.
@@ -239,7 +260,7 @@ TiedRef<T> Tied<T>::Tie(std::unique_ptr<T> value) {
 
 template <typename T>
 TiedRef<T> TiedAny::Tie(std::unique_ptr<T> value) {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   auto& base = entries_[&TypeId<T>::kId];
   if (!base) {
     base = std::make_unique<TiedTyped<T>>();

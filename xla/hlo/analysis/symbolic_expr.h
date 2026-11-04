@@ -47,7 +47,7 @@ enum class SymbolicExprType {
   kMin,
   kVariable,
   kConstant,  // Constant should be the last type for the comparator.
-  // TODO(karupayun): Add kIn operator.
+  // TODO: b/459357586 - Add kIn operator.
   // kIn,  // 'var in [a, b]' .
 };
 
@@ -76,6 +76,9 @@ class SymbolicExpr {
   std::string ToString(absl::Span<const std::string> dim_names,
                        absl::Span<const std::string> sym_names) const;
   int64_t Evaluate(absl::Span<const int64_t> variable_values) const;
+
+  // Safely evaluates the given expression, returning nullopt if the result is
+  // undefined (due to undefined behavior, e.g. division by zero or overflow).
   SymbolicExpr ReplaceVariables(
       absl::Span<const SymbolicExpr> substitutions) const;
   // TODO: b/459357586 - These methods are needed for IndexingMap, but
@@ -189,6 +192,13 @@ SymbolicExpr CreateSymbolicBinaryOp(SymbolicExprType type, SymbolicExpr lhs,
 llvm::SmallVector<SymbolicExpr> CreateSymbolicConstantExprs(
     llvm::ArrayRef<int64_t> constants, mlir::MLIRContext* mlir_context);
 
+// TODO: b/459357586 - This method is needed for IndexingMap, but
+// dimensions and symbols are SymbolicMap specific. We should refactor it and
+// include it as a method inside the class.
+std::optional<int64_t> SafeEvaluateSymbolicExpr(SymbolicExpr expr,
+                                                absl::Span<int64_t const> dims,
+                                                absl::Span<int64_t const> syms);
+
 }  // namespace xla
 
 namespace llvm {
@@ -198,10 +208,6 @@ template <>
 struct DenseMapInfo<xla::SymbolicExpr> {
   static xla::SymbolicExpr getEmptyKey() {
     auto* pointer = llvm::DenseMapInfo<void*>::getEmptyKey();
-    return xla::SymbolicExpr(static_cast<xla::SymbolicExprStorage*>(pointer));
-  }
-  static xla::SymbolicExpr getTombstoneKey() {
-    auto* pointer = llvm::DenseMapInfo<void*>::getTombstoneKey();
     return xla::SymbolicExpr(static_cast<xla::SymbolicExprStorage*>(pointer));
   }
   static unsigned getHashValue(xla::SymbolicExpr val) {

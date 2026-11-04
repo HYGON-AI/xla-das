@@ -1,5 +1,7 @@
-// RUN: hlo_to_xtileir %s | FileCheck %s
-// RUN: triton_test_correctness %s
+// RUN: hlo_to_xtileir --xla_gpu_experimental_enable_tiling_propagation=false %s | FileCheck %s
+// RUN: hlo_to_xtileir --xla_gpu_experimental_enable_tiling_propagation %s | FileCheck %s
+// RUN: triton_test_correctness --xla_gpu_experimental_enable_tiling_propagation=false %s
+// RUN: triton_test_correctness --xla_gpu_experimental_enable_tiling_propagation %s
 
 fusion {
   p0 = f32[1,1,1,1] parameter(0)
@@ -8,10 +10,9 @@ fusion {
   reshape2 = f32[] reshape(p1)
   ROOT add_op = f32[] add(reshape1, reshape2)
 }
-// CHECK:     tt.reshape
-// CHECK:     tt.reduce{{.*}}axis = 0
+// CHECK:     tt.unsplat
 // CHECK-NOT: tt.reshape
-// CHECK:     tt.reduce{{.*}}axis = 0
+// CHECK:     tt.unsplat
 // CHECK:     xtile.insert {{.*}} : tensor<f32>
 
 ENTRY main {

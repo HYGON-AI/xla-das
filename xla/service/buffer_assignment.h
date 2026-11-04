@@ -206,8 +206,8 @@ class BufferAllocation {
     PrimitiveType element_type() const { return element_type_; }
 
     bool operator==(const Slice& other) const {
-      if (allocation_ == nullptr) {
-        return other.allocation_ == nullptr;
+      if (allocation_ == nullptr || other.allocation_ == nullptr) {
+        return other.allocation_ == allocation_;
       }
       // We don't compare element_type_ because it's not always set, and it's
       // not relevant for the comparison here.
@@ -283,7 +283,8 @@ class BufferAllocation {
   // being reported.
   std::string MemoryUsageReport(const std::string& prefix,
                                 float percentile = 0.05,
-                                int64_t more_than_k = 50) const;
+                                int64_t more_than_k = 50,
+                                bool print_shape_layout = false) const;
 
   BufferAllocationProto ToProto() const;
   static BufferAllocation FromProto(const BufferAllocationProto&);
@@ -442,6 +443,11 @@ class BufferAssignment {
     return allocations_;
   }
 
+  // Moves out the allocations, consuming the BufferAssignment.
+  std::vector<BufferAllocation> TakeAllocations() && {
+    return std::move(allocations_);
+  }
+
   // Returns the total size allocation holding all temporary buffers.
   int64_t temp_allocation_total_size() const {
     return temp_allocation_total_size_;
@@ -565,7 +571,8 @@ class BufferAssignment {
   // Returns a memory usage report with the list of buffer allocations ordered
   // by the size(Z-A) and the values assigned to each buffer allocation.
   std::string MemoryUsageReport(float percentile = 0.05,
-                                int64_t more_than_k = 50) const;
+                                int64_t more_than_k = 50,
+                                bool print_shape_layout = false) const;
   // Verbose string tailored to debugging OOMs, includes the Hlo op metadata for
   // every buffer associated with each allocation.
   std::string ToVerboseString(const AliasInfo* alias_info,
@@ -770,6 +777,15 @@ class BufferAssigner {
     buffer_assignment::BufferAssignmentAlgorithmProto::Value
         buffer_assignment_algorithm =
             buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT;
+
+    buffer_assignment::BufferAssignmentAlgorithmProto::Value
+        fallback_algorithm =
+            buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT;
+
+    // Optional callback to return the memory limit for a given buffer color.
+    // If set and returns > 0, the returned limit is used instead of the
+    // default module config's device memory size.
+    std::function<int64_t(LogicalBuffer::Color)> color_memory_limit;
   };
 
   static Colorer DefaultColorer() {
@@ -786,8 +802,6 @@ class BufferAssigner {
       return absl::OkStatus();
     };
   }
-
-  // Returns false if a buffer cannot be assigned to given allocation.
 
   // Build and return a BufferAssignment for the given module. The given
   // HloOrdering is used to determine buffer liveness. buffer_size and
@@ -824,7 +838,10 @@ class BufferAssigner {
       BufferAssignment* assignment);
 
   // Returns true if buffer's live range interferences with buffer2's.
-  bool LiveRangeInterferes(const HloValue* buffer1, const HloValue* buffer2,
+  bool LiveRangeInterferes(const HloValue* buffer1,
+                           const HloLiveRange::TimeBound& live_range1,
+                           const HloValue* buffer2,
+                           const HloLiveRange::TimeBound& live_range2,
                            BufferAssignment* assignment);
 
   // Assigns pre-set assignments, if provided. These assignments will be added

@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/gpu/model/hlo_op_profiler.h"
 
+#include <unordered_set>
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
@@ -118,7 +120,7 @@ TEST_F(HloOpProfilerTest, AllSupportedCombinationsAreMeasurable) {
         !HloOpProfiler::Unsupported().count(op) &&
         !(is_rocm && skip_on_rocm.count(op))) {
       auto Type = FloatTypes.count(op) ? F32 : S32;
-      TF_EXPECT_OK(profiler.MeasureClockCyclesPerOp(op, Type));
+      EXPECT_OK(profiler.MeasureClockCyclesPerOp(op, Type));
     }
   }
 }

@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +21,7 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_AUTOTUNER_ROCBLAS_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -38,7 +43,7 @@ namespace gpu {
 // multiplications. rocBLAS calls are represented as custom-call instructions:
 // ```
 //   %custom-call.1 = .. custom-call(...), custom_call_target="__cublas$gemm",
-//   backend_config={"
+//   backend_config={
 //     gemm_backend_config":{"selected_algorithm":"18"}
 //   }
 // ```
@@ -63,10 +68,14 @@ class RocblasBackend : public GpuCodegenBackend {
   absl::Status ApplyConfig(HloInstruction& instr,
                            const BackendConfig& config) override;
 
+  std::string version() const override {
+    return target_config().device_description.runtime_version().ToString();
+  }
+
  private:
   bool ShouldUseHipblasLt(const HloInstruction& instr);
 
-  bool IsSupported(const HloInstruction& instr) override;
+  bool IsSupported(const HloInstruction& instr);
   bool fp8_lt_fallback_;
 };
 

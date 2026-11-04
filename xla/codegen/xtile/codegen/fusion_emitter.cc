@@ -24,13 +24,14 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -53,7 +54,6 @@ limitations under the License.
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
-#include "mlir/IR/Verifier.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
@@ -61,7 +61,6 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
-#include "mlir/Target/LLVMIR/Export.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
@@ -84,6 +83,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
+#include "xla/hlo/translate/hlo_to_mhlo/attribute_importer.h"
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_function_importer.h"
 #include "xla/layout.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
@@ -104,7 +104,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::xtile {
 
@@ -127,48 +126,6 @@ Value MakeIndex(mlir::ImplicitLocOpBuilder& b, int64_t value) {
 TensorValue Iota(mlir::ImplicitLocOpBuilder& b, int32_t limit) {
   auto type = mlir::RankedTensorType::get(limit, b.getI32Type());
   return stablehlo::IotaOp::create(b, type, /*iota_dimension=*/0);
-}
-
-absl::Status EmitReduceComputation(mlir::ImplicitLocOpBuilder& b,
-                                   const HloInstruction* hlo_reduction,
-                                   const HloComputation* reduction_computation,
-                                   mlir::Operation* reduction) {
-  TF_ASSIGN_OR_RETURN(
-      Type result_ty,
-      PrimitiveTypeToMlirType(b, hlo_reduction->shape().element_type()));
-  result_ty = mlir::RankedTensorType::get({}, result_ty);
-
-  mlir::Location loc = b.getLoc();
-  mlir::Block* reducer = b.createBlock(&reduction->getRegion(0), {},
-                                       {result_ty, result_ty}, {loc, loc});
-  b.setInsertionPointToStart(reducer);
-
-  std::vector<const HloInstruction*> to_emit;
-  absl::flat_hash_map<const HloInstruction*, TensorValue> region_values;
-  for (const HloInstruction* instr :
-       reduction_computation->MakeInstructionPostOrder()) {
-    if (instr->opcode() == HloOpcode::kParameter) {
-      int parameter_number = instr->parameter_number();
-      TF_RET_CHECK(parameter_number < 2);
-      auto argument = mlir::cast<mlir::TypedValue<mlir::RankedTensorType>>(
-          reducer->getArgument(parameter_number));
-
-      if (!argument) {
-        return Internal("Expected reducer argument to be a tensor.");
-      }
-
-      TF_RET_CHECK(region_values.insert({instr, argument}).second);
-    } else {
-      to_emit.push_back(instr);
-    }
-  }
-
-  TF_RET_CHECK(!to_emit.empty());
-
-  TF_ASSIGN_OR_RETURN(TensorValue result, EmitScope(b, to_emit, region_values));
-  stablehlo::ReturnOp::create(b, SmallVector<Value>({result}));
-  b.setInsertionPointAfter(reduction);
-  return absl::OkStatus();
 }
 
 absl::StatusOr<TensorValue> EmitReduce(
@@ -212,7 +169,7 @@ absl::StatusOr<TensorValue> EmitReduce(
 
   stablehlo::ReduceOp reduction = stablehlo::ReduceOp::create(
       b, input, init_value, hlo_reduce.dimensions());
-  TF_RETURN_IF_ERROR(
+  RETURN_IF_ERROR(
       EmitReduceComputation(b, &hlo_reduce, hlo_reduce.to_apply(), reduction));
 
   return mlir::cast<TensorValue>(reduction.getResult(0));
@@ -256,8 +213,8 @@ absl::StatusOr<TensorValue> EmitTiledIota(
 
   // We can treat iota more or less as a parameter load, except that we need to
   // generate the right values in the right place as opposed to loading them.
-  TF_ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
-                      tiled_iota.tile_offsets_indexing());
+  ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
+                   tiled_iota.tile_offsets_indexing());
 
   auto iota_dim_offset =
       Cast(b,
@@ -278,7 +235,7 @@ absl::StatusOr<TensorValue> EmitTiledIota(
       b, range, xtile::Splat(b, iota_dim_offset, padded_tile_sizes[iota_dim]));
 
   // Cast the result to the targeted type.
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       Type iota_element_type,
       PrimitiveTypeToMlirType(b, hlo_iota->shape().element_type()));
 
@@ -310,7 +267,6 @@ SmallVector<Value> GetRuntimeValues(
   return runtime_values;
 }
 
-
 absl::StatusOr<TensorValue> EmitTiledBitcast(
     mlir::ImplicitLocOpBuilder& b, const TiledHloInstruction& tiled_bitcast,
     TensorValue input) {
@@ -325,9 +281,8 @@ absl::StatusOr<TensorValue> EmitTiledBitcast(
           "Bitcast with different bitwidth for operand and output shape "
           "element type is not yet supported.");
     }
-    TF_ASSIGN_OR_RETURN(
-        Type output_element_type,
-        PrimitiveTypeToMlirType(b, output_shape.element_type()));
+    ASSIGN_OR_RETURN(Type output_element_type,
+                     PrimitiveTypeToMlirType(b, output_shape.element_type()));
     auto output_type = mlir::RankedTensorType::get(
         GetPaddedTileSizes(tiled_bitcast.operand(0)->tile_sizes()),
         output_element_type);
@@ -372,9 +327,8 @@ absl::StatusOr<TensorValue> EmitTiledBitcast(
   if (ShapeUtil::Equal(trt->transpose1_shape, trt->reshape_shape)) {
     normalized_reshape = normalized_input;
   } else {
-    TF_ASSIGN_OR_RETURN(
-        normalized_reshape,
-        EmitTiledReshape(b, reshape_tile_sizes, normalized_input));
+    ASSIGN_OR_RETURN(normalized_reshape,
+                     EmitTiledReshape(b, reshape_tile_sizes, normalized_input));
   }
 
   // The final transpose simply uses the tile sizes computed for the original
@@ -387,7 +341,7 @@ absl::StatusOr<TensorValue> EmitTiledBitcast(
 }
 
 absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloComputation& tiled_computation, mlir::FunctionOpInterface fn,
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values);
@@ -468,9 +422,9 @@ absl::StatusOr<TensorValue> MaskDotOperand(
 
       mask = xtile::BroadcastInDims(b, mlir::cast<TensorValue>(mask),
                                     tile_shape, {contraction_dimension_index});
-      TF_ASSIGN_OR_RETURN(auto element_type,
-                          PrimitiveTypeToMlirType(
-                              b, dot_operand.hlo()->shape().element_type()));
+      ASSIGN_OR_RETURN(auto element_type,
+                       PrimitiveTypeToMlirType(
+                           b, dot_operand.hlo()->shape().element_type()));
 
       TensorValue zero = CreateConst(b, element_type, 0.0f, tile_shape);
 
@@ -491,20 +445,20 @@ absl::StatusOr<TensorValue> MaskDotOperand(
 }
 
 absl::StatusOr<TensorValue> EmitTiledHloInstruction(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloInstruction& tiled_hlo, mlir::FunctionOpInterface fn,
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values);
 
 absl::Status EmitTiledInstructionList(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const std::vector<std::unique_ptr<TiledHloInstruction>>& tiled_instructions,
     mlir::FunctionOpInterface fn, Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
   for (const std::unique_ptr<TiledHloInstruction>& tiled_hlo :
        tiled_instructions) {
     const HloInstruction* hlo = tiled_hlo->hlo();
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         TensorValue result,
         EmitTiledHloInstruction(b, fusion, *tiled_hlo, fn, pid, values));
     TF_RET_CHECK(values.insert({tiled_hlo.get(), result}).second)
@@ -515,9 +469,8 @@ absl::Status EmitTiledInstructionList(
 }
 
 // Emits dot instruction that has LHS and RHS as part of its region.
-// TODO(b/446827313): pass references instead of pointers across the file.
 absl::StatusOr<TensorValue> EmitDot(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloInstruction& tiled_hlo_dot, mlir::FunctionOpInterface fn,
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
@@ -533,37 +486,22 @@ absl::StatusOr<TensorValue> EmitDot(
   //   acc += dot(lhs, rhs)
   // }
   // c = acc
-  // TODO(b/446827313): it is legal for dot to have no regions if LHS and RHS
-  // are already emitted and there is no reduction loop to emit.
-  TF_RET_CHECK(tiled_hlo_dot.regions().size() == 1);
+  TF_RET_CHECK(tiled_hlo_dot.hlo_regions().size() == 1);
 
   SmallVector<int64_t> padded_tile_sizes =
       GetPaddedTileSizes(tiled_hlo_dot.tile_sizes());
 
-  SmallVector<int64_t, 2> padded_tile_sizes_no_unit_dims =
-      CollapseUnitDims(padded_tile_sizes, padded_tile_sizes).first;
-
-  // Sanity check: Triton historically did not support non-2D dots (and still
-  // doesn't support arbitrary nD dots), so we require that the dot is tiled
-  // with exactly two non-unit tile sizes. This anyway matches the hardware's
-  // expectations, so seems like a reasonable requirement.
-  // TODO(b/393299275): this needs to be enforced in tiling.
-  if (padded_tile_sizes_no_unit_dims.size() != 2) {
-    return absl::FailedPreconditionError(
-        "Expected dot to be tiled with exactly two non-unit tile sizes");
-  }
   const HloDotInstruction& dot =
       *::xla::Cast<HloDotInstruction>(tiled_hlo_dot.hlo());
   // The specific accumulator type to use may not correspond to the output type
   // of the dot. In particular, that is the case when an algorithm is specified
   // and the dot's output type does not match its expectations.
-  TF_ASSIGN_OR_RETURN(Type accumulator_type,
-                      xtile::GetDotAccumulatorType(b, dot));
+  ASSIGN_OR_RETURN(Type accumulator_type, xtile::GetDotAccumulatorType(b, dot));
   TensorValue accumulator =
-      CreateConst(b, accumulator_type, 0.0f, padded_tile_sizes_no_unit_dims);
+      CreateConst(b, accumulator_type, 0.0f, padded_tile_sizes);
 
-  TF_ASSIGN_OR_RETURN(int64_t loop_iteration_count,
-                      GetDotLoopIterationCount(tiled_hlo_dot));
+  ASSIGN_OR_RETURN(int64_t loop_iteration_count,
+                   GetDotLoopIterationCount(tiled_hlo_dot));
   auto ctx = b.getContext();
   auto pid_dim = CreateDimExpr(0, ctx);
   auto ki_symbol = CreateSymbolExpr(0, /*num_dims=*/1, ctx);
@@ -592,11 +530,9 @@ absl::StatusOr<TensorValue> EmitDot(
     Value computation_index = xla::ApplyIndexingOp::create(
                                   b, ValueRange{pid, ki}, computation_index_map)
                                   .getResult(0);
-    // TODO(b/446827313): we should be careful here about adding to the "values"
-    // map: not all instructions will be valid outside of the loop.
-    TF_RETURN_IF_ERROR(EmitTiledInstructionList(b, fusion,
-                                                tiled_hlo_dot.regions().front(),
-                                                fn, computation_index, values));
+    RETURN_IF_ERROR(
+        EmitTiledInstructionList(b, fusion, tiled_hlo_dot.hlo_regions().front(),
+                                 fn, computation_index, values));
     SmallVector<TensorValue> dot_args;
     for (const TiledHloInstruction* operand : tiled_hlo_dot.operands()) {
       CHECK(values.contains(operand))
@@ -613,26 +549,15 @@ absl::StatusOr<TensorValue> EmitDot(
         dot.dot_dimension_numbers().rhs_contracting_dimensions(0);
 
     Value ki_i32 = Cast(b, ki, b.getI32Type());
-    TF_ASSIGN_OR_RETURN(
-        TensorValue lhs,
-        MaskDotOperand(b, *tiled_hlo_dot.operand(0), dot_args[0], ki_i32,
-                       lhs_contracting_dim_idx));
+    ASSIGN_OR_RETURN(TensorValue lhs,
+                     MaskDotOperand(b, *tiled_hlo_dot.operand(0), dot_args[0],
+                                    ki_i32, lhs_contracting_dim_idx));
 
-    TF_ASSIGN_OR_RETURN(
-        TensorValue rhs,
-        MaskDotOperand(b, *tiled_hlo_dot.operand(1), dot_args[1], ki_i32,
-                       rhs_contracting_dim_idx));
+    ASSIGN_OR_RETURN(TensorValue rhs,
+                     MaskDotOperand(b, *tiled_hlo_dot.operand(1), dot_args[1],
+                                    ki_i32, rhs_contracting_dim_idx));
 
-    // Canonicalize the dot operands to match Triton's/the hardware's
-    // expectations.
-    TF_ASSIGN_OR_RETURN(lhs,
-                        CanonicalizeDotOperand(b, lhs, lhs_contracting_dim_idx,
-                                               DotOperandSide::kLhs));
-    TF_ASSIGN_OR_RETURN(rhs,
-                        CanonicalizeDotOperand(b, rhs, rhs_contracting_dim_idx,
-                                               DotOperandSide::kRhs));
-
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         Value acc_next,
         xtile::EmitSingleTileDot(b, dot, xtile::DotOperands{lhs, rhs, acc}));
     mlir::scf::YieldOp::create(b, acc_next);
@@ -640,26 +565,20 @@ absl::StatusOr<TensorValue> EmitDot(
 
   // The output of the loop may not match the expected output type of the dot.
   // We make sure to issue a conversion if necessary.
-  TF_ASSIGN_OR_RETURN(Type dot_output_type,
-                      PrimitiveTypeToMlirType(b, dot.shape().element_type()));
+  ASSIGN_OR_RETURN(Type dot_output_type,
+                   PrimitiveTypeToMlirType(b, dot.shape().element_type()));
 
   Value result = for_op.getResult(0);
   if (dot_output_type != accumulator_type) {
     result = Cast(b, result, dot_output_type);
   }
 
-  auto tensor_result = mlir::cast<TensorValue>(result);
-
-  if (padded_tile_sizes.size() != padded_tile_sizes_no_unit_dims.size()) {
-    return EmitTiledReshape(b, padded_tile_sizes, tensor_result);
-  }
-
-  return tensor_result;
+  return mlir::cast<TensorValue>(result);
 }
 
 // Emits scaled dot instruction that is not nested into the fusion.
 absl::StatusOr<TensorValue> EmitScaledDot(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloInstruction& tiled_hlo_dot, mlir::FunctionOpInterface fn,
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
@@ -675,25 +594,11 @@ absl::StatusOr<TensorValue> EmitScaledDot(
   //   acc += dot(lhs, rhs)
   // }
   // c = acc
-  // TODO(b/446827313): it is legal for dot to have no regions if LHS and RHS
-  // are already emitted and there is no reduction loop to emit.
-  TF_RET_CHECK(tiled_hlo_dot.regions().size() == 1);
+  TF_RET_CHECK(tiled_hlo_dot.hlo_regions().size() == 1);
 
   SmallVector<int64_t> padded_tile_sizes =
       GetPaddedTileSizes(tiled_hlo_dot.tile_sizes());
 
-  SmallVector<int64_t, 2> padded_tile_sizes_no_unit_dims =
-      CollapseUnitDims(padded_tile_sizes, padded_tile_sizes).first;
-
-  // Sanity check: Triton historically did not support non-2D dots (and still
-  // doesn't support arbitrary nD dots), so we require that the dot is tiled
-  // with exactly two non-unit tile sizes. This anyway matches the hardware's
-  // expectations, so seems like a reasonable requirement.
-  // TODO(b/393299275): this needs to be enforced in tiling.
-  if (padded_tile_sizes_no_unit_dims.size() != 2) {
-    return absl::FailedPreconditionError(
-        "Expected dot to be tiled with exactly two non-unit tile sizes");
-  }
   const HloScaledDotInstruction& dot =
       *::xla::Cast<HloScaledDotInstruction>(tiled_hlo_dot.hlo());
   // The specific accumulator type to use may not correspond to the output type
@@ -701,10 +606,10 @@ absl::StatusOr<TensorValue> EmitScaledDot(
   // and the dot's output type does not match its expectations.
   Type accumulator_type = b.getF32Type();
   TensorValue accumulator =
-      CreateConst(b, accumulator_type, 0.0f, padded_tile_sizes_no_unit_dims);
+      CreateConst(b, accumulator_type, 0.0f, padded_tile_sizes);
 
-  TF_ASSIGN_OR_RETURN(int64_t loop_iteration_count,
-                      GetDotLoopIterationCount(tiled_hlo_dot));
+  ASSIGN_OR_RETURN(int64_t loop_iteration_count,
+                   GetDotLoopIterationCount(tiled_hlo_dot));
   auto ctx = b.getContext();
   auto pid_dim = CreateDimExpr(0, ctx);
   auto ki_symbol = CreateSymbolExpr(0, /*num_dims=*/1, ctx);
@@ -731,11 +636,9 @@ absl::StatusOr<TensorValue> EmitScaledDot(
     Value computation_index = xla::ApplyIndexingOp::create(
                                   b, ValueRange{pid, ki}, computation_index_map)
                                   .getResult(0);
-    // TODO(b/446827313): we should be careful here about adding to the "values"
-    // map: not all instructions will be valid outside of the loop.
-    TF_RETURN_IF_ERROR(EmitTiledInstructionList(b, fusion,
-                                                tiled_hlo_dot.regions().front(),
-                                                fn, computation_index, values));
+    RETURN_IF_ERROR(
+        EmitTiledInstructionList(b, fusion, tiled_hlo_dot.hlo_regions().front(),
+                                 fn, computation_index, values));
     SmallVector<TensorValue> dot_args;
     for (const TiledHloInstruction* operand : tiled_hlo_dot.operands()) {
       CHECK(values.contains(operand))
@@ -745,59 +648,22 @@ absl::StatusOr<TensorValue> EmitScaledDot(
     }
 
     Value acc = for_op.getRegionIterArgs().front();
-    int64_t lhs_contracting_dim_idx =
-        dot.dot_dimension_numbers().lhs_contracting_dimensions(0);
 
-    int64_t rhs_contracting_dim_idx =
-        dot.dot_dimension_numbers().rhs_contracting_dimensions(0);
-
-    Value ki_i32 = Cast(b, ki, b.getI32Type());
-    TF_ASSIGN_OR_RETURN(
-        TensorValue lhs,
-        MaskDotOperand(b, *tiled_hlo_dot.operand(0), dot_args[0], ki_i32,
-                       lhs_contracting_dim_idx));
-    TF_ASSIGN_OR_RETURN(
-        TensorValue rhs,
-        MaskDotOperand(b, *tiled_hlo_dot.operand(1), dot_args[1], ki_i32,
-                       rhs_contracting_dim_idx));
-
-    TF_ASSIGN_OR_RETURN(
-        TensorValue lhs_scale,
-        MaskDotOperand(b, *tiled_hlo_dot.operand(2), dot_args[2], ki_i32,
-                       lhs_contracting_dim_idx));
-
-    TF_ASSIGN_OR_RETURN(
-        TensorValue rhs_scale,
-        MaskDotOperand(b, *tiled_hlo_dot.operand(3), dot_args[3], ki_i32,
-                       rhs_contracting_dim_idx));
-
-    // Canonicalize the dot operands to match Triton's/the hardware's
-    // expectations.
-    TF_ASSIGN_OR_RETURN(
-        lhs_scale, CanonicalizeDotOperand(b, lhs_scale, lhs_contracting_dim_idx,
-                                          DotOperandSide::kLhs, lhs));
-    TF_ASSIGN_OR_RETURN(
-        rhs_scale, CanonicalizeDotOperand(b, rhs_scale, rhs_contracting_dim_idx,
-                                          DotOperandSide::kRhs, rhs));
-    TF_ASSIGN_OR_RETURN(lhs,
-                        CanonicalizeDotOperand(b, lhs, lhs_contracting_dim_idx,
-                                               DotOperandSide::kLhs));
-    TF_ASSIGN_OR_RETURN(rhs,
-                        CanonicalizeDotOperand(b, rhs, rhs_contracting_dim_idx,
-                                               DotOperandSide::kRhs));
-
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         Value acc_next,
         xtile::EmitSingleTileScaledDot(
             b, dot,
-            xtile::ScaledDotOperands{lhs, rhs, lhs_scale, rhs_scale, acc}));
+            xtile::ScaledDotOperands{
+                dot_args[0], dot_args[1], dot_args[2], dot_args[3], acc,
+                ::xla::stablehlo::ConvertDotDimensionNumbers(
+                    dot.dot_dimension_numbers(), &b)}));
     mlir::scf::YieldOp::create(b, acc_next);
   }
 
   // The output of the loop may not match the expected output type of the dot.
   // We make sure to issue a conversion if necessary.
-  TF_ASSIGN_OR_RETURN(Type dot_output_type,
-                      PrimitiveTypeToMlirType(b, dot.shape().element_type()));
+  ASSIGN_OR_RETURN(Type dot_output_type,
+                   PrimitiveTypeToMlirType(b, dot.shape().element_type()));
 
   Value result = for_op.getResult(0);
   if (dot_output_type != accumulator_type) {
@@ -805,16 +671,11 @@ absl::StatusOr<TensorValue> EmitScaledDot(
   }
 
   auto tensor_result = mlir::cast<TensorValue>(result);
-
-  if (padded_tile_sizes.size() != padded_tile_sizes_no_unit_dims.size()) {
-    return EmitTiledReshape(b, padded_tile_sizes, tensor_result);
-  }
-
   return tensor_result;
 }
 
 absl::StatusOr<TensorValue> EmitConcatenate(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloInstruction& tiled_concatenate, mlir::FunctionOpInterface fn,
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
@@ -823,7 +684,7 @@ absl::StatusOr<TensorValue> EmitConcatenate(
   const int64_t concatenate_dimension = hlo_concat->concatenate_dimension();
 
   TF_RET_CHECK(tiled_concatenate.operands().size() ==
-               tiled_concatenate.regions().size())
+               tiled_concatenate.hlo_regions().size())
       << "Concatenate must have the same number of operands and regions";
 
   // TODO(b/393299275): get rid of calls to `GetPaddedTileSizes` once tiling
@@ -833,18 +694,17 @@ absl::StatusOr<TensorValue> EmitConcatenate(
       GetPaddedTileSizes(tiled_concatenate.tile_sizes());
   int64_t concat_dim_tile_size = padded_tile_sizes[concatenate_dimension];
 
-  TF_RETURN_IF_ERROR(
-      CheckConcatenateOperands(*hlo_concat, concat_dim_tile_size));
-  TF_ASSIGN_OR_RETURN(Type element_type,
-                      PrimitiveTypeToMlirType(
-                          b, tiled_concatenate.hlo()->shape().element_type()));
+  RETURN_IF_ERROR(CheckConcatenateOperands(*hlo_concat, concat_dim_tile_size));
+  ASSIGN_OR_RETURN(Type element_type,
+                   PrimitiveTypeToMlirType(
+                       b, tiled_concatenate.hlo()->shape().element_type()));
   Type result_type =
       mlir::RankedTensorType::get(padded_tile_sizes, element_type);
 
   // We will load and compute from a single operand, so we need to figure out
   // which one by looking at the offset within the concatenation dimension.
-  TF_ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
-                      tiled_concatenate.tile_offsets_indexing());
+  ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
+                   tiled_concatenate.tile_offsets_indexing());
 
   Value concatenate_dimension_offset =
       emitters::ApplyIndexing(tile_offsets_indexing, /*dims=*/pid,
@@ -884,7 +744,7 @@ absl::StatusOr<TensorValue> EmitConcatenate(
       if_ops.push_back(if_op);
     }
     RETURN_IF_ERROR(EmitTiledInstructionList(
-        b, fusion, tiled_concatenate.regions()[i], fn, pid, values));
+        b, fusion, tiled_concatenate.hlo_regions()[i], fn, pid, values));
     // We assume that operand is part of the region, thus it will be in the
     // values.
     TF_RET_CHECK(values.contains(operand))
@@ -910,8 +770,8 @@ absl::StatusOr<TensorValue> EmitPad(
   const auto& pad_input_shape = tiled_operand->hlo()->shape().dimensions();
 
   // Compute tile offsets.
-  TF_ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
-                      tiled_pad.tile_offsets_indexing());
+  ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
+                   tiled_pad.tile_offsets_indexing());
   SmallVector<Value, 3> tile_offsets =
       emitters::ApplyIndexing(tile_offsets_indexing, /*dims=*/pid,
                               /*symbols=*/{}, b);
@@ -996,7 +856,7 @@ absl::StatusOr<TensorValue> EmitAllReduce(
   std::optional<int64_t> channel_handle = all_reduce.channel_id();
   bool use_global_device_ids = all_reduce.use_global_device_ids();
 
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       auto output_element_type,
       xtile::PrimitiveTypeToMlirType(b, all_reduce.shape().element_type()));
   auto output_type = mlir::RankedTensorType::get(tiled_hlo_reduce.tile_sizes(),
@@ -1018,37 +878,38 @@ absl::StatusOr<TensorValue> EmitAllReduce(
       b, b.getLoc(), output_type, mlir::ValueRange(operands),
       replica_groups_attr, channel_handle_attr, use_global_device_ids);
 
-  TF_RETURN_IF_ERROR(EmitReduceComputation(
-      b, &all_reduce, all_reduce.to_apply(), all_reduce_op));
+  RETURN_IF_ERROR(EmitReduceComputation(b, &all_reduce, all_reduce.to_apply(),
+                                        all_reduce_op));
 
   return mlir::cast<TensorValue>(all_reduce_op.getResult(0));
 }
 
 absl::StatusOr<TensorValue> EmitTiledHloInstruction(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloInstruction& tiled_hlo, mlir::FunctionOpInterface fn,
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
   const HloInstruction* hlo = tiled_hlo.hlo();
   VLOG(4) << "EmitTiledHloInstruction: " << hlo->ToString();
 
-  if (hlo->opcode() == HloOpcode::kParameter && !fusion->IsUserOf(hlo)) {
+  if (hlo->opcode() == HloOpcode::kParameter && !fusion.IsUserOf(hlo)) {
     hlo = hlo->parent()->FusionInstruction()->operand(hlo->parameter_number());
   }
 
-  if (fusion->IsUserOf(hlo)) {
-    int64_t arg_index = fusion->operand_index(hlo);
+  if (fusion.IsUserOf(hlo)) {
+    int64_t arg_index = fusion.operand_index(hlo);
     // Walk up the parameter chain to find the outermost operand index.
     while (auto* instr = hlo->parent()->FusionInstruction()) {
       arg_index = hlo->parameter_number();  // Nested operands are parameters.
       hlo = instr->operand(arg_index);
     }
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         TileInfo tile_info,
         TileInfo::Construct(b, pid, GetRuntimeValues(tiled_hlo, values),
                             tiled_hlo));
-    TensorValue parameter =
-        EmitParameterExtract(b, tile_info, fn.getArgument(arg_index));
+    ASSIGN_OR_RETURN(
+        TensorValue parameter,
+        EmitParameterExtract(b, tile_info, fn.getArgument(arg_index)));
 
     // Workaround(i1_to_i8_workaround)
     // Some types are stored using different types, e.g. i1 is stored in memory
@@ -1056,9 +917,8 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
     // loading if the type of the loaded parameter does not match what is
     // expected.
     Type loaded_element_type = getElementTypeOrSelf(parameter.getType());
-    TF_ASSIGN_OR_RETURN(
-        Type expected_element_type,
-        PrimitiveTypeToMlirType(b, hlo->shape().element_type()));
+    ASSIGN_OR_RETURN(Type expected_element_type,
+                     PrimitiveTypeToMlirType(b, hlo->shape().element_type()));
 
     if (expected_element_type != loaded_element_type) {
       // Ensure that we didn't mess up somewhere else by checking that we
@@ -1067,7 +927,7 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
         return absl::InternalError(absl::StrCat(
             "Parameters were loaded with an unexpected element type "
             "while lowering ",
-            fusion->called_computation()->ToString()));
+            fusion.called_computation()->ToString()));
       }
       parameter =
           mlir::cast<TensorValue>(Cast(b, parameter, expected_element_type));
@@ -1113,8 +973,7 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
   }
 
   if (hlo->opcode() == HloOpcode::kAllReduceStart) {
-    const HloComputation* computation =
-        fusion->fused_instructions_computation();
+    const HloComputation* computation = fusion.fused_instructions_computation();
     const HloInstruction* root_instruction = computation->root_instruction();
     if (root_instruction->opcode() == HloOpcode::kAllReduceDone) {
       root_instruction = root_instruction->operand(0);
@@ -1135,7 +994,7 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
     for (const TiledHloInstruction* operand : tiled_hlo.operands()) {
       operands.push_back(values[operand]);
     }
-    TF_ASSIGN_OR_RETURN(Value result, EmitElementwise(b, *hlo, operands));
+    ASSIGN_OR_RETURN(Value result, EmitElementwise(b, *hlo, operands));
     return mlir::cast<TensorValue>(result);
   }
 
@@ -1173,7 +1032,7 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
 }
 
 absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloComputation& tiled_computation, mlir::FunctionOpInterface fn,
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
@@ -1195,15 +1054,15 @@ absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
       VLOG(1) << "Skipping nested fusion: " << hlo->ToString();
       continue;
     }
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         TensorValue result,
         EmitTiledHloInstruction(b, fusion, *tiled_hlo, fn, pid, values));
     TF_RET_CHECK(values.insert({tiled_hlo, result}).second) << hlo->ToString();
     VLOG(8) << "Emitted " << hlo->ToString(HloPrintOptions::ShortParsable());
   }
   std::vector<TensorValue> results;
-  results.reserve(tiled_computation.GetRoots().size());
-  for (const auto* root : tiled_computation.GetRoots()) {
+  results.reserve(tiled_computation.roots().size());
+  for (const auto* root : tiled_computation.roots()) {
     results.push_back(values[root]);
   }
   return std::move(results);
@@ -1214,13 +1073,13 @@ absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
 namespace {
 
 absl::Status EmitGeneric(mlir::OpBuilder builder,
-                         const HloFusionInstruction* fusion,
+                         const HloFusionInstruction& fusion,
                          const SymbolicTileAnalysis& symbolic_tile_analysis,
                          const Tiling& tiling, xtile::EntryFuncOp fn,
                          MLIRContext* mlir_context) {
   if (VLOG_IS_ON(6)) {
     VLOG(6) << "Emitting XTile IR for fusion\n"
-            << ExtractInstructionIntoNewModule(*fusion)->ToString();
+            << ExtractInstructionIntoNewModule(fusion)->ToString();
   }
 
   // TODO(b/372454662): Decide which root to use. Currently, we only support
@@ -1270,23 +1129,23 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
     }
   }
   TF_RET_CHECK(root_index < symbolic_tile_analysis.GetRoots().size());
-  TF_ASSIGN_OR_RETURN(TiledHloComputation tiled_hlo_computation,
-                      symbolic_tile_analysis.ComputeTiledComputation(
-                          tiling, schedule_builder,
-                          /*constraints_are_known_satisfied=*/false,
-                          /*compute_all_tile_offset_indexing_maps=*/true));
+  ASSIGN_OR_RETURN(TiledHloComputation tiled_hlo_computation,
+                   symbolic_tile_analysis.ComputeTiledComputation(
+                       tiling, schedule_builder,
+                       /*constraints_are_known_satisfied=*/false,
+                       /*compute_all_tile_offset_indexing_maps=*/true));
   VLOG(3) << "EmitGeneric: tiled HLO computation:\n"
           << tiled_hlo_computation.ToString();
 
   Value tile_id = fn.getTileId();
   absl::flat_hash_map<const TiledHloInstruction*, TensorValue> values;
-  TF_ASSIGN_OR_RETURN(auto results,
-                      EmitTiledComputation(b, fusion, tiled_hlo_computation, fn,
-                                           tile_id, values));
+  ASSIGN_OR_RETURN(auto results,
+                   EmitTiledComputation(b, fusion, tiled_hlo_computation, fn,
+                                        tile_id, values));
 
-  const HloComputation* computation = fusion->fused_instructions_computation();
+  const HloComputation* computation = fusion.fused_instructions_computation();
   for (auto [root, result, arg] :
-       llvm::zip(tiled_hlo_computation.GetRoots(), results,
+       llvm::zip(tiled_hlo_computation.roots(), results,
                  fn.getArguments().drop_front(computation->num_parameters()))) {
     // Workaround(i1_to_i8_workaround)
     // Some types are stored using different types, e.g. i1 is stored in memory
@@ -1299,7 +1158,7 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
       result = mlir::cast<TensorValue>(Cast(b, result, result_storage_type));
     }
 
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         auto tile_info,
         TileInfo::Construct(b, tile_id, /*runtime_values=*/{}, *root));
 
@@ -1317,14 +1176,19 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
 // triton specific things. It should be migrated to use non-triton specific
 // utilities.
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
-    absl::string_view fn_name, const HloFusionInstruction* fusion,
+    absl::string_view fn_name, const HloFusionInstruction& fusion,
     const SymbolicTileAnalysis& symbolic_tile_analysis, const Tiling& tiling,
     MLIRContext& mlir_context, absl::Span<mlir::Type> opaque_args_types,
     const std::optional<stream_executor::GpuComputeCapability>& gpu_cc) {
-  const auto debug_options = fusion->GetModule()->config().debug_options();
+  const auto debug_options = fusion.GetModule()->config().debug_options();
+
+  if (fusion.IsMultiOutputFusion() &&
+      !debug_options.xla_gpu_unsupported_enable_triton_multi_output_fusion()) {
+    return absl::InvalidArgumentError("Multi-output fusion is disabled.");
+  }
 
   const HloComputation* hlo_computation =
-      fusion->fused_instructions_computation();
+      fusion.fused_instructions_computation();
 
   auto loc = mlir::NameLoc::get(
       mlir::StringAttr::get(&mlir_context, hlo_computation->name()));
@@ -1335,8 +1199,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
   b.setInsertionPointToEnd(xtile_module->getBody());
 
   // Build Triton kernel.
-  TF_ASSIGN_OR_RETURN(auto fn_arg_types,
-                      GetFnArgTypes(b, fusion, opaque_args_types, gpu_cc));
+  ASSIGN_OR_RETURN(auto fn_arg_types,
+                   GetFnArgTypes(b, fusion, opaque_args_types, gpu_cc));
 
   // Metadata arguments are opaque to the tiling infra.
   llvm::SmallVector<mlir::NamedAttribute> named_attributes{b.getNamedAttr(
@@ -1348,8 +1212,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
   fn.addEntryBlock();
   b.setInsertionPointToStart(&fn.front());
 
-  TF_RETURN_IF_ERROR(EmitGeneric(b, fusion, symbolic_tile_analysis, tiling, fn,
-                                 &mlir_context));
+  RETURN_IF_ERROR(EmitGeneric(b, fusion, symbolic_tile_analysis, tiling, fn,
+                              &mlir_context));
 
   b.create<xtile::EntryFuncReturnOp>();
 
@@ -1359,7 +1223,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
     mlir::PassManager pm(&mlir_context);
     pm.addPass(xtile::createVerifyLegalXTileOpsPass());
     tsl::StatusScopedDiagnosticHandler diagnostic_handler(&mlir_context);
-    TF_RETURN_IF_ERROR(diagnostic_handler.consumeStatus(pm.run(*xtile_module)));
+    RETURN_IF_ERROR(diagnostic_handler.consumeStatus(pm.run(*xtile_module)));
   }
   return xtile_module;
 }

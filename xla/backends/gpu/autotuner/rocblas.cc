@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,10 +57,9 @@ RocblasBackend::GetSupportedConfigs(const HloInstruction& instr) {
 
   if (ShouldUseHipblasLt(instr)) {
     std::vector<std::unique_ptr<BackendConfig>> configs;
-    AutotuneResult::GemmKey gemm_key;
-    gemm_key.set_algorithm(0);
-    configs.push_back(std::make_unique<google::protobuf::Any>());
-    configs.back()->PackFrom(gemm_key);
+    auto config = std::make_unique<BackendConfig>();
+    config->mutable_gemm()->set_algorithm(0);
+    configs.push_back(std::move(config));
     return configs;
   }
 
@@ -73,11 +76,28 @@ RocblasBackend::GetSupportedConfigs(const HloInstruction& instr) {
   GemmBackendConfig backend_config;
   backend_config =
       instr.backend_config<GpuBackendConfig>()->gemm_backend_config();
-  TF_ASSIGN_OR_RETURN(
-      GemmConfig gemm_config,
-      GemmConfig::For(
-          &instr, backend_config,
-          target_config().device_description.gpu_compute_capability()));
+
+  // rocBLAS cannot always enumerate solutions (e.g. it does not support the
+  // requested compute type, such as TF32). In that case keep the GEMM on the
+  // default algorithm instead of failing the compilation.
+  auto default_only_configs = [] {
+    std::vector<std::unique_ptr<BackendConfig>> configs;
+    auto config = std::make_unique<BackendConfig>();
+    config->mutable_gemm()->set_algorithm(se::blas::kDefaultAlgorithm);
+    configs.push_back(std::move(config));
+    return configs;
+  };
+
+  auto gemm_config_or =
+      GemmConfig::For(&instr, backend_config,
+                      target_config().device_description.gpu_compute_capability());
+  if (!gemm_config_or.ok()) {
+    VLOG(1) << "RocblasBackend: cannot analyze GEMM, falling back to the "
+               "default algorithm: "
+            << gemm_config_or.status();
+    return default_only_configs();
+  }
+  GemmConfig gemm_config = *std::move(gemm_config_or);
 
   auto create_matrix_desc = [](const se::gpu::MatrixLayout& layout)
       -> absl::StatusOr<se::gpu::MatrixDescriptor> {
@@ -120,15 +140,18 @@ RocblasBackend::GetSupportedConfigs(const HloInstruction& instr) {
   blas->GetBlasGemmAlgorithms(stream, lhs_desc, rhs_desc, &out_desc,
                               &gemm_config.alpha, &gemm_config.beta,
                               &algorithms);
+  if (algorithms.empty()) {
+    VLOG(1) << "RocblasBackend: rocBLAS reported no solutions, falling back "
+               "to the default algorithm";
+    return default_only_configs();
+  }
 
   std::vector<std::unique_ptr<BackendConfig>> configs;
   configs.reserve(algorithms.size());
   for (se::blas::AlgorithmType algorithm : algorithms) {
-    AutotuneResult::GemmKey gemm_key;
-    gemm_key.set_algorithm(algorithm);
-    auto any = std::make_unique<google::protobuf::Any>();
-    any->PackFrom(gemm_key);
-    configs.push_back(std::move(any));
+    auto config = std::make_unique<BackendConfig>();
+    config->mutable_gemm()->set_algorithm(algorithm);
+    configs.push_back(std::move(config));
   }
   return configs;
 }
@@ -139,23 +162,19 @@ absl::StatusOr<std::unique_ptr<BackendConfig>> RocblasBackend::GetDefaultConfig(
     return absl::InvalidArgumentError(
         "RocblasBackend does not support this instruction.");
   }
-  AutotuneResult::GemmKey gemm_key;
-  gemm_key.set_algorithm(se::blas::kDefaultAlgorithm);
-  auto any = std::make_unique<google::protobuf::Any>();
-  if (ShouldUseHipblasLt(instr)) {
-    gemm_key.set_algorithm(0);
-  }
-  any->PackFrom(gemm_key);
-  return any;
+  auto config = std::make_unique<BackendConfig>();
+  config->mutable_gemm()->set_algorithm(
+      ShouldUseHipblasLt(instr) ? 0 : se::blas::kDefaultAlgorithm);
+  return config;
 }
 
 absl::Status RocblasBackend::ApplyConfig(HloInstruction& instr,
                                          const BackendConfig& config) {
-  AutotuneResult::GemmKey gemm_key;
-  if (!config.UnpackTo(&gemm_key)) {
+  if (!config.has_gemm()) {
     return absl::InvalidArgumentError(
-        "Failed to unpack RocblasBackendConfig from Any.");
+        "Expected GemmKey config for RocblasBackend.");
   }
+  AutotuneResult::GemmKey gemm_key = config.gemm();
   if (ShouldUseHipblasLt(instr) && gemm_key.algorithm() == -1) {
     gemm_key.set_algorithm(0);
   }

@@ -21,14 +21,18 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
+#include "xla/backends/gpu/runtime/collective_thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
@@ -39,24 +43,22 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
 CollectiveBroadcastThunk::CollectiveBroadcastThunk(ThunkInfo thunk_info,
                                                    CollectiveConfig config,
                                                    std::vector<Buffer> buffers)
-    : CollectiveThunk(Thunk::kCollectiveBroadcast, thunk_info),
-      config_(config),
-      buffers_(std::move(buffers)) {}
+    : CollectiveThunk(Thunk::kCollectiveBroadcast, thunk_info,
+                      std::move(buffers)),
+      config_(config) {}
 
 CollectiveBroadcastThunk::CollectiveBroadcastThunk(
     ThunkInfo thunk_info, const HloCollectiveBroadcastInstruction* instr,
     std::vector<Buffer> buffers, bool p2p_memcpy_enabled)
-    : CollectiveThunk(Thunk::kCollectiveBroadcast, thunk_info),
-      config_(GetCollectiveConfig(instr, std::nullopt)),
-      buffers_(std::move(buffers)) {}
+    : CollectiveThunk(Thunk::kCollectiveBroadcast, thunk_info,
+                      std::move(buffers)),
+      config_(GetCollectiveConfig(instr, std::nullopt)) {}
 
 /*static*/ absl::Status CollectiveBroadcastThunk::CheckImplementable(
     const HloInstruction* instr, int64_t replica_count,
@@ -71,7 +73,7 @@ CollectiveBroadcastThunk::CollectiveBroadcastThunk(
 
 absl::StatusOr<std::unique_ptr<CollectiveBroadcastThunk>>
 CollectiveBroadcastThunk::FromProto(
-    ThunkInfo thunk_info, const CollectiveBroadcastStartThunkProto& thunk_proto,
+    ThunkInfo thunk_info, const CollectiveBroadcastThunkProto& thunk_proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   CollectiveConfig config =
       CollectiveConfig::FromProto(thunk_proto.collective_config());
@@ -93,10 +95,10 @@ absl::StatusOr<ThunkProto> CollectiveBroadcastThunk::ToProto() const {
   ThunkProto proto;
   *proto.mutable_thunk_info() = thunk_info().ToProto();
 
-  CollectiveBroadcastStartThunkProto* thunk_proto =
-      proto.mutable_collective_broadcast_start_thunk();
+  CollectiveBroadcastThunkProto* thunk_proto =
+      proto.mutable_collective_broadcast_thunk();
 
-  for (const Buffer& buffer : buffers_) {
+  for (const Buffer& buffer : buffers()) {
     ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());
   }
 
@@ -109,27 +111,26 @@ absl::Status CollectiveBroadcastThunk::RunCollective(
     const ExecuteParams& params, const GpuCliqueKey& clique_key,
     se::Stream& stream, Communicator& comm) {
   ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
-                   ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
+                   ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                                           config_.operand_element_type));
   return ::xla::gpu::RunCollectiveBroadcast(device_buffers, stream, comm);
 }
 
 absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,
                                     se::Stream& stream, Communicator& comm) {
-  auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(&comm);
-  Future<> future = gpu_comm->GroupExecute(
-      [&buffers, &stream](GpuCommunicator* comm) -> absl::Status {
-        for (auto buffer : buffers) {
-          se::DeviceAddressBase src_addr = buffer.source_buffer;
-          se::DeviceAddressBase dest_addr = buffer.destination_buffer;
-          RETURN_IF_ERROR(comm->LaunchBroadcast(
-              // Always use rank 0 since we always broadcast from the first id
-              // in replica_groups
-              src_addr, dest_addr, buffer.element_type, buffer.element_count,
-              RankId(0), GpuCollectives::On(stream)));
-        }
-        return absl::OkStatus();
-      });
+  auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
+  Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
+    for (auto buffer : buffers) {
+      se::DeviceAddressBase src_addr = buffer.source_buffer;
+      se::DeviceAddressBase dest_addr = buffer.destination_buffer;
+      RETURN_IF_ERROR(gpu_comm->LaunchBroadcast(
+          // Always use rank 0 since we always broadcast from the first id
+          // in replica_groups
+          src_addr, dest_addr, buffer.element_type, buffer.element_count,
+          RankId(0), GpuCollectives::On(stream)));
+    }
+    return absl::OkStatus();
+  });
   return future.Await();
 }
 

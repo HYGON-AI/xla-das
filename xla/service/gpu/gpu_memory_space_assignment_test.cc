@@ -15,9 +15,8 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 
-#include <cstdint>
 #include <memory>
-#include <utility>
+#include <string>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -34,6 +33,7 @@ limitations under the License.
 #include "xla/service/hlo_value.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -488,6 +488,65 @@ TEST_F(GpuMemorySpaceAssignmentTest, CustomCallTupleResultMemorySpace) {
     }
   }
 }
+
+class GpuMosaicCollectiveMemorySpaceAssignmentTest
+    : public GpuMemorySpaceAssignmentTest,
+      public ::testing::WithParamInterface<bool> {
+ public:
+  bool IsMosaicWithCollectiveMetadata() const { return GetParam(); }
+};
+
+TEST_P(GpuMosaicCollectiveMemorySpaceAssignmentTest,
+       MosaicCollectiveMemorySpaceAssignment) {
+  const std::string kMosaicModule = absl::StrCat(
+      R"(
+    HloModule m
+    ENTRY main {
+      ROOT %custom-call.9 = (f16[8])",
+      IsMosaicWithCollectiveMetadata() ? "{0:S(1)}" : "", R"(, f16[8])",
+      IsMosaicWithCollectiveMetadata() ? "{0:S(1)}" : "",
+      R"() custom-call(), custom_call_target="mosaic_gpu_v2"
+    }
+  )");
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  DebugOptions debug_options = config.debug_options();
+  config.set_debug_options(debug_options);
+
+  BufferAssigner::Colorer colorer = CreateColorer(config.debug_options());
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(kMosaicModule, config));
+  AliasInfo alias_info;
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                          HloAliasAnalysis::Run(module.get(), &alias_info));
+  DependencyHloOrdering ordering(module.get());
+  TF_EXPECT_OK(colorer(alias_analysis.get(), ordering));
+
+  EXPECT_EQ(alias_analysis->buffers().size(), 3);
+
+  // First buffer is a tuple-shaped value, so it should not be colored.
+  for (int i = 1; i < alias_analysis->buffers().size(); ++i) {
+    EXPECT_EQ(alias_analysis->buffers()[i].values().size(), 1);
+    EXPECT_EQ(alias_analysis->buffers()[i].values()[0]->has_color(), true);
+
+    int expected_color = static_cast<int>(IsMosaicWithCollectiveMetadata()
+                                              ? MemorySpaceColor::kCollective
+                                              : MemorySpaceColor::kDefault);
+    EXPECT_EQ(alias_analysis->buffers()[i].values()[0]->color(), expected_color)
+        << "Buffer " << alias_analysis->buffers()[i].ToString()
+        << " should have color " << expected_color;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    GpuMosaicCollectiveMemorySpaceAssignmentTestSuiteInstantiation,
+    GpuMosaicCollectiveMemorySpaceAssignmentTest, ::testing::Bool(),
+    [](const ::testing::TestParamInfo<
+        GpuMosaicCollectiveMemorySpaceAssignmentTest::ParamType>& info) {
+      return info.param ? "mosaic_uses_collective_metadata"
+                        : "mosaic_does_not_use_collective_metadata";
+    });
 
 }  // namespace
 }  // namespace xla::gpu

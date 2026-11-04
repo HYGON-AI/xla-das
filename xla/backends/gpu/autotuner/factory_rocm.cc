@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,11 +31,13 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/backends/gpu/autotuner/block_level_emitter.h"
 #include "xla/backends/gpu/autotuner/factory.h"
 #include "xla/backends/gpu/autotuner/fission_backend.h"
 #include "xla/backends/gpu/autotuner/hipblaslt.h"
 #include "xla/backends/gpu/autotuner/miopen.h"
 #include "xla/backends/gpu/autotuner/rocblas.h"
+#include "xla/backends/gpu/autotuner/native_emitter.h"
 #include "xla/backends/gpu/autotuner/triton.h"
 #include "xla/backends/gpu/transforms/dot_algorithm_rewriter.h"
 #include "xla/backends/gpu/transforms/gemm_rewriter.h"
@@ -39,6 +45,7 @@ limitations under the License.
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/service/compiler.h"
+#include "xla/service/hlo_cost_analysis.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform/platform_object_registry.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
@@ -81,7 +88,7 @@ std::vector<std::unique_ptr<CodegenBackend>> GetCodegenBackendsForROCm(
     stream_executor::DeviceAddressAllocator* device_allocator,
     const DebugOptions* debug_options, Compiler* compiler,
     const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
-    MLIRContext* mlir_context,
+    MLIRContext* mlir_context, HloCostAnalysis::ShapeSizeFunction shape_size_fn,
     absl::Span<const autotuner::Backend> backend_allowlist) {
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::make_unique<TritonBackend>(
@@ -100,16 +107,21 @@ std::vector<std::unique_ptr<CodegenBackend>> GetCodegenBackendsForROCm(
       GetGemmRewriterPipeline(target_config->device_description,
                               /*enable_cublaslt=*/false, kAllDTypes),
       alias_info, mlir_context));
-  bool enable_cublaslt = debug_options->xla_gpu_enable_cublaslt();
   backends.push_back(std::make_unique<FissionBackend>(
       debug_options, compiler, target_config,
       std::make_unique<HipblasLtBackend>(stream_executor, debug_options,
                                          compiler, target_config),
-      GetGemmRewriterPipeline(
-          target_config->device_description, /*enable_cublaslt=*/true,
-          enable_cublaslt ? absl::Span<const DType>(kAllDTypes)
-                          : kFp8OnlyDTypes),
+      GetGemmRewriterPipeline(target_config->device_description,
+                              /*enable_cublaslt=*/true,
+                              debug_options->xla_gpu_enable_cublaslt()
+                                  ? absl::Span<const DType>(kAllDTypes)
+                                  : kFp8OnlyDTypes),
       alias_info, mlir_context));
+  backends.push_back(std::make_unique<NativeEmitterBackend>(
+      debug_options, compiler, target_config));
+  backends.push_back(std::make_unique<BlockLevelEmitterBackend>(
+      debug_options, compiler, shape_size_fn, target_config));
+
   if (!backend_allowlist.empty()) {
     backends.erase(
         std::remove_if(backends.begin(), backends.end(),

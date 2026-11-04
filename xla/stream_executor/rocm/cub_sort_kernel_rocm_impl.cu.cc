@@ -83,7 +83,7 @@ struct define<tsl::bfloat16> {
 };
 
 }  // namespace traits
-#endif
+#endif  // TF_ROCM_VERSION >= 50200 && TF_ROCM_VERSION < 70000
 
 };  // namespace rocprim
 

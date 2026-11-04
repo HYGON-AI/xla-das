@@ -50,6 +50,7 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Analysis/CGSCCPassManager.h"
@@ -65,6 +66,8 @@ limitations under the License.
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Metadata.h"
@@ -89,7 +92,7 @@ limitations under the License.
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/TargetParser/TargetParser.h"
+#include "llvm/TargetParser/AMDGPUTargetParser.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/Internalize.h"
 #include "llvm/Transforms/Scalar.h"
@@ -196,7 +199,9 @@ struct HsacoCache {
               << "' is enabled for LLVM modules with bitcode size >= "
               << bitcode_size_threshold_ << " bytes";
 
-    if (hsaco_cache_dir_.back() != '/') hsaco_cache_dir_ += '/';
+    if (hsaco_cache_dir_.back() != '/') {
+      hsaco_cache_dir_ += '/';
+    }
   }
 
  public:
@@ -232,7 +237,9 @@ struct HsacoCache {
         VLOG(1) << "HSACO file cache hit";
       }
     }
-    if (hit) hit_count_++;
+    if (hit) {
+      hit_count_++;
+    }
     VLOG(1) << "HSACO cache: " << request_count_ << " requests, " << hit_count_
             << " hits";
     return hit;
@@ -244,7 +251,9 @@ struct HsacoCache {
                     std::vector<uint8_t>* hsaco) {
     std::ifstream ifs(hsaco_src_path, std::ios::binary | std::ios::ate);
     size_t fsize = ifs.tellg();
-    if (!ifs.is_open() || fsize == 0) return false;
+    if (!ifs.is_open() || fsize == 0) {
+      return false;
+    }
     hsaco->resize(fsize);
     ifs.seekg(0, std::ios::beg);
     ifs.read(reinterpret_cast<char*>(hsaco->data()), fsize);
@@ -377,7 +386,9 @@ RegisterSpillInfo ParseAMDGPUMetadataForSpills(llvm::StringRef metadata) {
   RegisterSpillInfo spill_info;
   // Iterate through each kernel, collecting per-kernel spill info.
   for (auto& kernel_node : kernels_array) {
-    if (!kernel_node.isMap()) continue;
+    if (!kernel_node.isMap()) {
+      continue;
+    }
 
     llvm::msgpack::MapDocNode kernel_map = kernel_node.getMap();
     KernelSpillInfo kernel_info;
@@ -645,6 +656,25 @@ absl::Status CompileModuleToHsacoWithHcu(
     llvm::Module* module, llvm::TargetMachine* target_machine,
     absl::string_view gfx, absl::string_view ir_path,
     absl::string_view asm_path, absl::string_view hsaco_path) {
+  // HCU codegen lacks some boolean-to-bfloat conversion patterns.
+  for (llvm::Function& function : *module) {
+    for (llvm::BasicBlock& block : function) {
+      for (auto it = block.begin(); it != block.end();) {
+        auto* cast = llvm::dyn_cast<llvm::UIToFPInst>(&*it++);
+        if (cast == nullptr || !cast->getSrcTy()->isIntegerTy(1) ||
+            !cast->getDestTy()->isBFloatTy()) {
+          continue;
+        }
+        llvm::IRBuilder<> builder(cast);
+        auto* one = llvm::ConstantFP::get(cast->getDestTy(), 1.0);
+        auto* zero = llvm::ConstantFP::get(cast->getDestTy(), 0.0);
+        cast->replaceAllUsesWith(
+            builder.CreateSelect(cast->getOperand(0), one, zero));
+        cast->eraseFromParent();
+      }
+    }
+  }
+
   std::string ir;
   llvm::raw_string_ostream ir_stream(ir);
   module->setDataLayout(target_machine->createDataLayout());
@@ -860,7 +890,7 @@ absl::Status AMDGPUTargetModuleLinker(
     return xla::Internal("Incompatible compute capability was specified.");
   }
 
-  TF_RETURN_IF_ERROR(
+  RETURN_IF_ERROR(
       amdgpu::LinkROCDLIfNecessary(module, compute_capability->gfx_version(),
                                    debug_options, device_bitcode_dir_path));
 
@@ -912,7 +942,9 @@ std::pair<std::string, std::string> GetFeatureStrFromGCNArchName(
   // For ROCm versions 4.0 and greater, we need to specify the correct
   // feature str, based on the underlying GPU HW to get max performance.
   std::vector<std::string> tokens = absl::StrSplit(gcn_arch_name, ':');
-  if (!tokens.empty()) gfx = tokens[0];
+  if (!tokens.empty()) {
+    gfx = tokens[0];
+  }
 
   std::string mapped_tokens;
   for (size_t i = 1; i < tokens.size(); i++) {
@@ -920,7 +952,8 @@ std::pair<std::string, std::string> GetFeatureStrFromGCNArchName(
     // The rest of the tokens are the feature/targetid strings
     auto mapped_token = MapGCNArchNameTokenToFeatureStr(tokens[i], gfx);
     if (!mapped_token.empty()) {
-      mapped_tokens += "," + mapped_token;
+      if (!mapped_tokens.empty()) mapped_tokens += ",";
+      mapped_tokens += mapped_token;
     }
   }
   return std::pair{gfx, mapped_tokens};
@@ -987,13 +1020,13 @@ absl::StatusOr<amdgpu::HsacoResult> CompileToHsacoInternal(
       GetTargetMachine(default_target_triple, gfx, debug_options, feature_str);
 
   // Link with ROCm-Device-Libs, and optimize the LLVM module.
-  TF_RETURN_IF_ERROR(gpu::LinkAndOptimizeModule(
+  RETURN_IF_ERROR(gpu::LinkAndOptimizeModule(
       module, gpu_version, debug_options, rocdl_dir_path,
       AMDGPUTargetModuleLinker, default_target_triple, target_machine.get(),
       kAMDGPUInlineThreshold));
 
   // Lower optimized LLVM module to HSA code object.
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       std::string hsaco_path,
       EmitModuleToHsaco(module, target_machine.get(), debug_options, gfx,
                         feature_str));
@@ -1006,7 +1039,9 @@ absl::StatusOr<amdgpu::HsacoResult> CompileToHsacoInternal(
   if (!HsacoCache::i().ReadFromFile(hsaco_path, &hsaco)) {
     return xla::Internal("Unable to read hsaco output file");
   }
-  if (hsaco_temp_path) *hsaco_temp_path = std::move(hsaco_path);
+  if (hsaco_temp_path) {
+    *hsaco_temp_path = std::move(hsaco_path);
+  }
 
   RegisterSpillInfo spill_info = ExtractRegisterSpillingFromHsaco(hsaco);
   if (spill_info.HasSpilling()) {
@@ -1149,8 +1184,7 @@ absl::Status LinkROCDLIfNecessary(llvm::Module* module,
     return absl::OkStatus();
   }
 
-  TF_RETURN_IF_ERROR(
-      LinkWithBitcodeVector(module, GetROCDLPaths(rocdl_dir_path)));
+  RETURN_IF_ERROR(LinkWithBitcodeVector(module, GetROCDLPaths(rocdl_dir_path)));
 
   // Sanitize stray metadata from the bitcode files
   if (auto* opencl_version = module->getNamedMetadata("opencl.ocl.version")) {
@@ -1228,7 +1262,9 @@ absl::StatusOr<HsacoResult> CompileToHsaco(
   auto bitcode_size = os.bitcode_size();
 
   sha256.update(comp_c->gcn_arch_name());
-  for (const auto& s : llvm_opts) sha256.update(s);
+  for (const auto& s : llvm_opts) {
+    sha256.update(s);
+  }
   // NOTE: adding module_config_cache_key to the hash, invalidates the
   // persistent file cache.
   // sha256.update(module_config_cache_key);
