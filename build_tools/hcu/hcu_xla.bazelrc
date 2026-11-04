@@ -2,10 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 common:hcu_base --config=rocm_base
+common:hcu_base --config=clang_local
+common:hcu_base --crosstool_top=@local_config_rocm//crosstool:toolchain
 common:hcu_base --repo_env=ROCM_PATH=/opt/dtk
 common:hcu_base --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx906,gfx926,gfx928,gfx936,gfx938"
 common:hcu_base --action_env=TF_ROCM_CLANG="1"
 common:hcu_base --action_env=CLANG_COMPILER_PATH="/opt/dtk/aillvm/bin/clang"
+common:hcu_base --linkopt=-rtlib=compiler-rt
+common:hcu_base --linkopt=--unwindlib=libgcc
 
 # Used by @xla//build_tools/hcu:parallel_gpu_execute to find rocminfo runfiles.
 common:hcu_base --legacy_external_runfiles=true
