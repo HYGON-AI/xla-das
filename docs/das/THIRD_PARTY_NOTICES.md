@@ -7,7 +7,7 @@ and are ordered to match that directory listing.
 ## XLA
 
 - Source: https://github.com/ROCm/xla
-- Fixed source commit: `d5734fef24ced94d13d7f28a5d41868e78415ffa`
+- Fixed source commit: `622bea629f784980d0c7a810a37b7e060e91d918`
 - License: Apache License, Version 2.0
 - Original copyright: Copyright The OpenXLA Authors
 - Hygon modifications: HCU platform adaptations for the DTK toolchain, HCU codegen backend enablement, ROCm stream-executor and hipBLASLt runtime adjustments, Triton compilation-pipeline routing and IR-builder fixes for HCU targets, LLVM/Triton build-patch and workspace updates, and legacy HCU gfx9 target support.
@@ -49,7 +49,7 @@ and are ordered to match that directory listing.
 | Highwayhash | https://github.com/google/highwayhash | `c13d28517a4db259d738ea4886b1f00352a3cc33` | Apache License, Version 2.0 | `third_party/highwayhash` | — |
 | hwloc | https://github.com/open-mpi/hwloc | 2.7.1 | BSD-3-Clause License | `third_party/hwloc` | — |
 | Implib.so | https://github.com/yugr/Implib.so | `2cce6cab8ff2c15f9da858ea0b68646a8d62aef2` | MIT License | `third_party/implib_so` | — |
-| LLVM Project | https://github.com/llvm/llvm-project | `9a4faee1068c09efbf837cfb7b0f5693b24635f4` | Apache License, Version 2.0 with LLVM Exceptions | `third_party/llvm` | Yes |
+| LLVM Project | https://github.com/llvm/llvm-project | `35901313800ea6e6cbeb9226e51c7c4b29bfc40e` | Apache License, Version 2.0 with LLVM Exceptions | `third_party/llvm` | Yes |
 | LLVM OpenMP Runtime | https://github.com/llvm/llvm-project (openmp 10.0.1 release tarball) | 10.0.1 | Apache License, Version 2.0 with LLVM Exceptions | `third_party/llvm_openmp` | — |
 | Intel MKL | https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html | n/a (license-declaration stub) | BSD-3-Clause License (as declared by the vendored Bazel package) | `third_party/mkl` | — |
 | oneDNN (MKL-DNN) | https://github.com/oneapi-src/oneDNN | 3.7.3 | Apache License, Version 2.0 | `third_party/mkl_dnn` | — |
@@ -85,7 +85,7 @@ and are ordered to match that directory listing.
 | StableHLO | https://github.com/openxla/stablehlo | `806a6844dfd92cca1ce5391c86dca0ef9e952550` | Apache License, Version 2.0 | `third_party/stablehlo` | — |
 | TensorRT | https://github.com/NVIDIA/TensorRT | `9ec6eb6db39188c9f3d25f49c8ee3a9721636b56` | Apache License, Version 2.0 | `third_party/tensorrt` | — |
 | Transformer Engine | https://github.com/NVIDIA/TransformerEngine | 2.5 | Apache License, Version 2.0 | `third_party/transformer_engine` | — |
-| OpenAI Triton | https://github.com/triton-lang/triton | `feb6c04abe15e74faa23f0935ae74c0a38c5e37f` | MIT License | `third_party/triton` | Yes |
+| OpenAI Triton | https://github.com/triton-lang/triton | `609ced5e3f04e55234115524eb734822331a37d7` | MIT License | `third_party/triton` | Yes |
 | TensorFlow Standard Library | https://github.com/openxla/xla/tree/main/xla/tsl | vendored with XLA `9b635916ecc6df6efee62d8e4b0c7ef87ef84d69` | Apache License, Version 2.0 | `third_party/tsl`, `xla/tsl` | — |
 | libuv | https://github.com/libuv/libuv | 1.38.0 | MIT License | `third_party/uv` | — |
 | XNNPACK | https://github.com/google/XNNPACK | `bccfe73347861f07a0257c0c546c0babcf3257b8` | BSD-3-Clause License | `third_party/xnnpack` | — |

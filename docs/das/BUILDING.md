@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > **xla-das** 是面向 DAS 架构的 xla 下游适配发行版，
-> 基于 [ROCm/xla](https://github.com/ROCm/xla) 的 `d5734fef24ced94d13d7f28a5d41868e78415ffa` 基线构建并集成 DAS 支持。
+> 基于 [ROCm/xla](https://github.com/ROCm/xla) 的 `622bea629f784980d0c7a810a37b7e060e91d918` 基线构建并集成 DAS 支持。
 > 
 > 本项目不是 xla 官方发行版，而是基于 [ROCm/xla](https://github.com/ROCm/xla) 二次开发；ROCm xla 源自 [openxla/xla](https://github.com/openxla/xla) 二次开发。
 
