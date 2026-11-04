@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2019 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -110,7 +114,11 @@ absl::Status SetName(HloModule* module, HloInstruction* gemm) {
 // Note that `Ctype` also describes the output type of the GEMM. Rows with
 // `Non-default epilogue not supported` entries in the last column indicate data
 // types not compatible with Epilogue Fusion.
-bool SupportsEpilogueFusion(PrimitiveType type) {
+bool SupportsEpilogueFusion(PrimitiveType type, bool is_rocm) {
+  // dtk hipBLASLt not support F64 now
+  if (is_rocm && type == F64) {
+    return false;
+  }
   switch (type) {
     case F8E4M3FN:
     case F8E5M2:
@@ -1985,7 +1993,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
           broadcast->shape(), (slice ? slice->shape() : gemm->shape())));
     }
     // Verify that the data type is supported by Epilogue Fusion.
-    if (!SupportsEpilogueFusion(gemm->shape().element_type())) {
+    if (!SupportsEpilogueFusion(gemm->shape().element_type(),
+                                gpu_version_.IsRocm())) {
       return false;
     }
 
@@ -2119,7 +2128,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         broadcast->shape(),
         (slice_or_bitcast ? slice_or_bitcast->shape() : gemm->shape())));
 
-    if (!SupportsEpilogueFusion(gemm->shape().element_type())) {
+    if (!SupportsEpilogueFusion(gemm->shape().element_type(),
+                                gpu_version_.IsRocm())) {
       return absl::OkStatus();
     }
 
@@ -2154,7 +2164,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   absl::Status FuseGeluActivation(HloInstruction* multiply,
                                   HloInstruction* gemm,
                                   HloInstruction* slice_or_bitcast = nullptr) {
-    if (!SupportsEpilogueFusion(gemm->shape().element_type())) {
+    if (!SupportsEpilogueFusion(gemm->shape().element_type(),
+                                gpu_version_.IsRocm())) {
       return absl::OkStatus();
     }
     // For CUDA versions less than 12.3.2, cuBLAS LT returns
@@ -2239,7 +2250,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   absl::Status FuseSwishActivation(HloInstruction* multiply,
                                    HloInstruction* gemm,
                                    HloInstruction* slice_or_bitcast = nullptr) {
-    if (!SupportsEpilogueFusion(gemm->shape().element_type())) {
+    if (!SupportsEpilogueFusion(gemm->shape().element_type(),
+                                gpu_version_.IsRocm())) {
       return absl::OkStatus();
     }
     // For CUDA versions less than 12.3.2, cuBLAS LT returns

@@ -564,7 +564,7 @@ absl::StatusOr<ScopedTensorDescriptor> scope(
       std::vector<int64_t> dims64 =
           batch_descriptor.full_dims(dnn::DataLayout::kBatchDepthYX);
 
-#if MIOPEN_BETA_API
+#if (MIOPEN_BETA_API && TF_ROCM_VERSION >= 60300)
       status = miopenSetTensorDescriptorV2(obj.handle_, data_type, nd,
                                            (const size_t*)dims64.data(),
                                            (const size_t*)strides64.data());
@@ -645,7 +645,7 @@ absl::StatusOr<ScopedFilterDescriptor> scope(
       std::vector<int64_t> dims64 =
           filter_descriptor.full_dims(dnn::FilterLayout::kOutputInputYX);
 
-#if MIOPEN_BETA_API
+#if (MIOPEN_BETA_API && TF_ROCM_VERSION >= 60300)
       status = miopenSetTensorDescriptorV2(obj.handle_, data_type, nd,
                                            (const size_t*)dims64.data(),
                                            (const size_t*)strides64.data());
@@ -715,6 +715,7 @@ absl::StatusOr<ScopedConvolutionDescriptor> scope(
                << ToString(status);
   }
 
+#if (TF_ROCM_VERSION >= 50300)
   if (RequireMIOpenDeterminism()) {
     status = miopenSetConvolutionAttribute(
         obj.handle_, MIOPEN_CONVOLUTION_ATTRIB_DETERMINISTIC, 1);
@@ -723,6 +724,7 @@ absl::StatusOr<ScopedConvolutionDescriptor> scope(
                  << ToString(status);
     }
   }
+#endif
   return obj;
 }
 
