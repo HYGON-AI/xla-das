@@ -1,4 +1,7 @@
 /* Copyright 2026 The OpenXLA Authors.
+   Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+   SPDX-License-Identifier: Apache-2.0
+   Modified by Hygon Information Technology Co., Ltd., 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -46,6 +49,10 @@ using ::testing::Not;
 class RcclSymmetricMemoryTest : public ::testing::Test {
  protected:
   void SetUp() override {
+#if TF_ROCM_VERSION < 70000
+    GTEST_SKIP() << "RCCL symmetric memory requires ROCm 7.0 or newer";
+#endif  // TF_ROCM_VERSION < 70000
+
     // Skip if no ROCm/HIP GPU is present.
     int device_count = 0;
     if (hipGetDeviceCount(&device_count) != hipSuccess || device_count < 1) {
