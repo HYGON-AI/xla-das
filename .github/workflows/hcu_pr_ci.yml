@@ -15,6 +15,7 @@ on:
   pull_request_target:
     branches:
       - main
+      - dev
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "xla/**"
@@ -31,7 +32,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
 jobs:
   manual_approval:
