@@ -172,7 +172,7 @@ mkdir -p "${PROFILE_DIR}"
 bash "${CI_BUILD_SCRIPT}" \
     --config=hcu \
     --config=ci_single_gpu \
-    --local_test_jobs=4 \
+    --local_test_jobs=8 \
     --test_output=errors \
     --test_summary=detailed \
     --test_timeout=600,1800,3600,7200 \
