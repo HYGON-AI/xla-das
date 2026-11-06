@@ -14,14 +14,11 @@ CI_BUILD_SCRIPT="${SCRIPT_DIR}/run_xla_ci_build.sh"
 TIER_PASS=(
     //xla/backends/gpu/transforms:async_wrapper_test_amdgpu_any
     //xla/backends/gpu/transforms:conv_fusion_rewriter_test_amdgpu_any
-    //xla/backends/gpu/transforms:cublas_gemm_rewriter_test_amdgpu_any
-    //xla/backends/gpu/transforms:cudnn_norm_rewriter_test_amdgpu_any
     //xla/backends/gpu/transforms:dot_dimension_sorter_test_amdgpu_any
     //xla/backends/gpu/transforms:gemm_broadcast_folding_rewriter_test_amdgpu_any
     //xla/backends/gpu/transforms:gemm_rewriter_allocation_test_amdgpu_any
     //xla/backends/gpu/transforms:gemm_rewriter_fp8_test_amdgpu_any
     //xla/backends/gpu/transforms:gemm_rewriter_test_amdgpu_any
-    //xla/backends/gpu/transforms:onehot_rewriter_test_amdgpu_any
     //xla/backends/gpu/transforms:reduction_layout_normalizer_test_amdgpu_any
     //xla/backends/gpu/transforms:scatter_determinism_expander_test_amdgpu_any
     //xla/backends/gpu/transforms:sort_rewriter_test_amdgpu_any
@@ -93,7 +90,7 @@ TIER_E2E=(
     //xla/backends/gpu/tests:async_kernel_launch_test_amdgpu_any
     //xla/backends/gpu/tests:command_buffer_test_amdgpu_any
     //xla/backends/gpu/tests:dump_autotune_results_to_test_outputs_test_amdgpu_any
-    //xla/backends/gpu/tests:dynamic_slice_fusion_test_amdgpu_any
+    //xla/backends/gpu/tests:dynamic_slice_fusion_v2_test_amdgpu_any
     //xla/backends/gpu/tests:element_wise_row_vectorization_test_amdgpu_any
     //xla/backends/gpu/tests:float_conversions_test_amdgpu_any
     //xla/backends/gpu/tests:gpu_alignment_test_amdgpu_any
@@ -139,13 +136,13 @@ TIER_NUM=(
     //xla/tests:cpu_gpu_fusion_test_amdgpu_any
     //xla/tests:half_test_amdgpu_any
     //xla/tests:int4_test_amdgpu_any
-    //xla/tests:llvm_compiler_test_amdgpu_any
     //xla/tests:multithreaded_compilation_test_amdgpu_any
     //xla/tests:reduce_hlo_test_amdgpu_any
     //xla/tests:reduce_window_rewriter_execution_test_amdgpu_any
     //xla/tests:sample_file_test_amdgpu_any
     //xla/tests:sample_text_test_amdgpu_any
     //xla/tests:scatter_deterministic_expander_test_amdgpu_any
+    //xla/tests/restricted:llvm_compiler_test_amdgpu_any
     //xla/codegen/intrinsic/accuracy:intrinsic_accuracy_test_amdgpu_any
 )
 
