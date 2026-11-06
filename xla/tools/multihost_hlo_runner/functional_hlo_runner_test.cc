@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -644,7 +648,8 @@ absl::StatusOr<std::string> GetExpectedBackendFingerprint() {
   ASSIGN_OR_RETURN(std::string platform_name,
                    PlatformUtil::CanonicalPlatformName("gpu"));
   if (platform_name == "rocm") {
-    return "3128633344";
+    // The HCU autotuner add rocBLAS so change the backend finger.
+    return "4224411583";
   }
   return "286644258";
 }

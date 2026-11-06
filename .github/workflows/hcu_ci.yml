@@ -101,7 +101,7 @@ jobs:
             --config=hcu \
             --config=ci_single_gpu \
             --config=hcu_sgpu \
-            --local_test_jobs=4
+            --local_test_jobs=8
 
       - name: Test XLA [multi_gpu]
         timeout-minutes: 360
