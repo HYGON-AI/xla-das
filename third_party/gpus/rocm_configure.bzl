@@ -51,6 +51,7 @@ _HYHAL_PATH = "HYHAL_PATH"
 _DEFAULT_HYHAL_PATH = "/opt/hyhal"
 _ROCM_TOOLKIT_PATH = "ROCM_PATH"
 _DEFAULT_ROCM_TOOLKIT_PATH = "/opt/dtk"
+_HCU_SMI_STAGE = "rocm/rocm_smi"
 
 _TF_ROCM_RBE_DOCKER_IMAGE = "TF_ROCM_RBE_DOCKER_IMAGE"
 _TF_ROCM_RBE_POOL = "TF_ROCM_RBE_POOL"
@@ -356,7 +357,7 @@ def _setup_rocm_distro_dir(repository_ctx):
     return _get_rocm_config(repository_ctx, bash_bin, _DISTRIBUTION_PATH, str(hipcc_rocm_path))
 
 def _link_runtime_rocm_smi(repository_ctx, rocm_path):
-    """Links rocm_smi from hyhal or the local toolkit into the ROCm dist.
+    """Stages rocm_smi from hyhal or the local toolkit inside this repository.
 
     Args:
       repository_ctx: The repository context.
@@ -372,7 +373,7 @@ def _link_runtime_rocm_smi(repository_ctx, rocm_path):
         "include/rocm_smi",
     ]:
         source = source_root + "/" + relative
-        target = _DISTRIBUTION_PATH + "/" + relative
+        target = _HCU_SMI_STAGE + "/" + relative
         if repository_ctx.path(source).exists and not repository_ctx.path(target).exists:
             repository_ctx.symlink(source, target)
 
