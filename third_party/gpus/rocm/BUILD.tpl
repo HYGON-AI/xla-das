@@ -323,9 +323,27 @@ rocm_lib_import(
 
 rocm_lib_import(
     name = "rocm_smi",
-    data = glob(["%{rocm_root}/lib/librocm_smi64.so*"]),
-    interface_library = "%{rocm_root}/lib/librocm_smi64.so",
-    deps = [],
+    data = glob(["rocm_smi/lib/librocm_smi64.so*"]),
+    interface_library = "rocm_smi/lib/librocm_smi64.so",
+    deps = [
+        ":rocm_smi_headers",
+        ":rocm_smi_headers_includes",
+    ],
+)
+
+cc_library(
+    name = "rocm_smi_headers",
+    hdrs = glob(["rocm_smi/include/**"]),
+    include_prefix = "rocm",
+    strip_include_prefix = "rocm_smi",
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "rocm_smi_headers_includes",
+    hdrs = glob(["rocm_smi/include/**"]),
+    strip_include_prefix = "rocm_smi/include",
+    visibility = ["//visibility:private"],
 )
 
 bzl_library(
