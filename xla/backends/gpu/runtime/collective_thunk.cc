@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+// Modified by Hygon Information Technology Co., Ltd., 2026.
+
 /* Copyright 2019 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,6 +62,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/trace_command_buffer_factory.h"
@@ -70,6 +75,16 @@ namespace xla::gpu {
 namespace {
 
 static constexpr int64_t kCollectiveMemorySpaceColor = 1;
+
+// RCCL symmetric windows need ROCm 7.0 or newer; older runtimes use private memory.
+bool SupportsSymmetricBuffer(const se::StreamExecutor* executor) {
+  if (executor == nullptr) {
+    return false;
+  }
+  const se::DeviceDescription& device = executor->GetDeviceDescription();
+  return !device.gpu_compute_capability().IsRocm() ||
+         device.runtime_version() >= se::SemanticVersion(7, 0, 0);
+}
 
 bool IsTypeSupportedBy(PrimitiveType element_type, Thunk::Kind reduction_op) {
   switch (element_type) {
@@ -312,7 +327,8 @@ absl::Status CollectiveThunk::Prepare(const PrepareParams& params) {
   RETURN_IF_ERROR(params.collective_clique_requests->RequestClique(
       clique_key, *device_groups_, GetCliqueRequirements(clique_key)));
 
-  if (CanUseSymmetricBuffer() && config().use_symmetric_buffer) {
+  if (CanUseSymmetricBuffer() && config().use_symmetric_buffer &&
+      SupportsSymmetricBuffer(params.executor)) {
     for (const Buffer& buffer : buffers_) {
       if (buffer.source_memory_space == kCollectiveMemorySpaceColor) {
         RETURN_IF_ERROR(
