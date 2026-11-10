@@ -40,3 +40,7 @@ common:rbe_linux_cpu --features=layering_check
 common:bzlmod --features=-layering_check
 
 try-import %workspace%/xla_configure.bazelrc
+
+common:hcu --copt=-DXLA_ROCM_ENABLE_HCU=1
+common:hcu --repo_env=HCU_ENABLED=1
+common:hcu --define=HCU_ENABLED=true

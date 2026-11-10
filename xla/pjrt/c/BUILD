@@ -1,3 +1,6 @@
+# Modified by Hygon Information Technology Co., Ltd., 2026.
+
+load("@bazel_skylib//lib:selects.bzl", "selects")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
@@ -27,6 +30,24 @@ load(
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = internal_visibility(["//xla:internal"]),
+)
+
+config_setting(
+    name = "hcu_enabled_true",
+    define_values = {"HCU_ENABLED": "true"},
+)
+
+config_setting(
+    name = "hcu_enabled_1",
+    define_values = {"HCU_ENABLED": "1"},
+)
+
+selects.config_setting_group(
+    name = "use_hcu",
+    match_any = [
+        ":hcu_enabled_true",
+        ":hcu_enabled_1",
+    ],
 )
 
 cc_library(
@@ -661,7 +682,6 @@ cc_library(
         ":pjrt_c_api_xla_transform_internal",
         "//xla/backends/cpu:target_machine_options",
         "//xla/backends/profiler:profiler_backends",  # To register the Host Tracers for GPU Plugin.
-        "//xla/backends/profiler/gpu:device_tracer",  # To register the GPU Tracers with the GPU Plugin.
         "//xla/backends/profiler/plugin:plugin_tracer_impl",
         "//xla/backends/profiler/plugin:profiler_c_api_hdrs",
         "//xla/backends/profiler/plugin:profiler_error",
@@ -701,7 +721,12 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_protobuf//:protobuf",
-    ] + if_cuda_is_configured([
+    ] + select({
+        ":use_hcu": [],
+        "//conditions:default": [
+            "//xla/backends/profiler/gpu:device_tracer",  # To register the GPU Tracers with the GPU Plugin.
+        ],
+    }) + if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
     ]),
 )
