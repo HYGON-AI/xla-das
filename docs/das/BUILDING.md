@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > **xla-das** 是面向 DAS 架构的 xla 下游适配发行版，
-> 基于 [ROCm/xla](https://github.com/ROCm/xla) 的 `622bea629f784980d0c7a810a37b7e060e91d918` 基线构建并集成 DAS 支持。
+> 基于 [ROCm/xla](https://github.com/ROCm/xla) 的 `c4bf012d69a801cbe85125c9e9bc15df8a809ae9` 基线构建并集成 DAS 支持。
 > 
 > 本项目不是 xla 官方发行版，而是基于 [ROCm/xla](https://github.com/ROCm/xla) 二次开发；ROCm xla 源自 [openxla/xla](https://github.com/openxla/xla) 二次开发。
 
@@ -11,10 +11,10 @@
 | 依赖名称 | 依赖版本 | 说明 |
 | - | - | - |
 | Ubuntu / Rocky | >= 20.04 / >= 8.5 | x86_64，仅支持 Linux |
-| DTK | >= 26.04 | 提供 HIP / hipBLASLt / MIOpen 等运行时，默认安装于 `/opt/dtk` |
-| aillvm | >= 18 | 提供优化的 llvm，默认安装于 `/opt/dtk/aillvm` |
+| DTK | >= 26.10 | 提供 HIP / hipBLASLt / MIOpen 等运行时，默认安装于 `/opt/dtk` |
+| aillvm | >= 22 | 提供优化的 llvm，默认安装于 `/opt/dtk/aillvm` |
 | Python | 3.11 / 3.12 | 默认 3.11，依赖锁定见 `requirements_lock_3_11.txt` / `requirements_lock_3_12.txt` |
-| Bazel | 7.7.0 | 见 `.bazelversion`，建议使用 bazelisk 自动匹配版本 |
+| Bazel | 8.7.0 | 见 `.bazelversion`，建议使用 bazelisk 自动匹配版本 |
 
 ## 支持的 HCU 目标
 
