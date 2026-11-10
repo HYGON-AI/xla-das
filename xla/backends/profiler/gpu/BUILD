@@ -210,7 +210,6 @@ xla_test(
         ":cupti_wrapper",
         ":mock_cupti",
         "//xla/tsl/profiler/utils:time_utils",
-        "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
         "@local_config_cuda//cuda:cupti_headers",
     ],
@@ -416,6 +415,7 @@ cc_library(
             ":cupti_utils",
             "//xla/stream_executor/cuda:cuda_status",
             "//xla/tsl/platform:errors",
+            "//xla/tsl/platform:status_macros",
             "@com_google_absl//absl/base",
             "@com_google_absl//absl/base:core_headers",
             "@com_google_absl//absl/cleanup",
@@ -429,7 +429,7 @@ cc_library(
             "@local_config_cuda//cuda:cupti_headers",
             "@tsl//tsl/platform:errors",
         ],
-    ) + ["//xla/tsl/platform:status_macros"],
+    ),
 )
 
 cc_library(

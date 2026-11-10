@@ -17,9 +17,9 @@ limitations under the License.
 #include <cstdint>
 
 #include "absl/base/casts.h"
+#include "Eigen/Core"
 #include "third_party/gpus/cuda/include/cuda/atomic"
 #include "third_party/gpus/cuda/include/cuda_fp16.h"
-#include "Eigen/Core"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/gpu/buffer_debug_float_check_kernel.h"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
@@ -29,7 +29,7 @@ namespace stream_executor::gpu {
 __device__ static constexpr uint64_t kWarpSize = 32;
 }  // namespace stream_executor::gpu
 
-#include "xla/stream_executor/gpu/buffer_debug_float_check_kernel_lib.cu.h"
+#include "xla/stream_executor/gpu/buffer_debug_float_check_kernel_lib.cu.h.inc"
 
 namespace stream_executor::gpu {
 

@@ -17,11 +17,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "rocm/include/rocm_smi/rocm_smi.h"
 #include "xla/stream_executor/rocm/smi_util.h"
 #include "xla/tsl/platform/logging.h"
@@ -77,7 +77,8 @@ absl::StatusOr<std::vector<SmiDeviceHandle>> EnumerateDevices() {
 }
 
 absl::StatusOr<SmiDeviceHandle> FindDevice(const BdfComponents& target_bdf) {
-  ASSIGN_OR_RETURN(std::vector<SmiDeviceHandle> devices, EnumerateDevices());
+  ABSL_ASSIGN_OR_RETURN(std::vector<SmiDeviceHandle> devices,
+                        EnumerateDevices());
 
   for (SmiDeviceHandle device : devices) {
     uint64_t bdfid = 0;
