@@ -1159,6 +1159,10 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
     desc.set_l2_cache_size(prop.l2CacheSize);
   }
 
+#if XLA_ROCM_ENABLE_HCU
+  // Use the same default XLA falls back to when HCU rocm_smi cannot report PCIe bandwidth.
+  desc.set_pcie_bandwidth(32LL * 1024 * 1024 * 1024);
+#else
   {
     absl::StatusOr<int64_t> pcie_bw = gpu::GetRocmPcieBandwidth(pci_bus_id);
     if (pcie_bw.ok()) {
@@ -1171,6 +1175,7 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
       desc.set_pcie_bandwidth(32LL * 1024 * 1024 * 1024);
     }
   }
+#endif  // XLA_ROCM_ENABLE_HCU
 
   {
     absl::StatusOr<gpu::XgmiTopologyInfo> xgmi =
