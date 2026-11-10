@@ -3,7 +3,7 @@
 
 common:hcu_base --config=rocm_base
 common:hcu_base --config=clang_local
-common:hcu_base --crosstool_top=@local_config_rocm//crosstool:toolchain
+common:hcu_base --extra_toolchains=@local_config_rocm//crosstool:toolchain-linux-x86_64
 common:hcu_base --repo_env=ROCM_PATH=/opt/dtk
 common:hcu_base --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx906,gfx926,gfx928,gfx936,gfx938"
 common:hcu_base --action_env=TF_ROCM_CLANG="1"
@@ -17,6 +17,11 @@ common:hcu_base --legacy_external_runfiles=true
 common:hcu --config=hcu_base
 common:hcu --copt=-DXLA_ROCM_ENABLE_HCU=1
 common:hcu --repo_env=HCU_ENABLED=1
+
+# host ISA for Highway AVX-512
+common:hcu --copt=-DHWY_COMPILE_ONLY_STATIC
+common:hcu --copt=-DHWY_DISABLED_TARGETS=(HWY_AVX3|HWY_AVX3_DL|HWY_AVX3_ZEN4|HWY_AVX3_SPR|HWY_AVX10_2)
+common:hcu --host_copt=-DHWY_DISABLED_TARGETS=(HWY_AVX3|HWY_AVX3_DL|HWY_AVX3_ZEN4|HWY_AVX3_SPR|HWY_AVX10_2)
 
 # -----------------------------------------------------------------------------
 # Test execution.
@@ -32,7 +37,7 @@ build:ci_single_gpu --run_under=//build_tools/hcu:parallel_gpu_execute
 build:ci_single_gpu --flaky_test_attempts=3
 
 # Multi-GPU: must NOT use parallel_gpu_execute -- it pins each test to a single device
-build:ci_multi_gpu --test_env=XLA_FLAGS="--xla_gpu_force_compilation_parallelism=16 --xla_gpu_enable_llvm_module_compilation_parallelism=true"
+build:ci_multi_gpu --test_env=XLA_FLAGS="--xla_gpu_force_compilation_parallelism=16"
 build:ci_multi_gpu --test_env=NCCL_MAX_NCHANNELS=1
 build:ci_multi_gpu --test_sharding_strategy=disabled
 build:ci_multi_gpu --flaky_test_attempts=3
