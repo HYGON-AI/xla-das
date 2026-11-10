@@ -1,3 +1,5 @@
+# Modified by Hygon Information Technology Co., Ltd., 2026.
+
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@xla//third_party/rules_python/python:py_binary.bzl", "py_binary")
 load("//xla:xla.default.bzl", "xla_cc_test")
@@ -173,6 +175,7 @@ cc_library(
         "HAS_SUPPORT_FOR_LLD_AS_A_LIBRARY=1",
         "HAS_SUPPORT_FOR_EMBEDDED_LIB_DEVICE=1",
     ]),
+
     tags = [
         "gpu",
         "nofixdeps",  # This target crashes build_cleaner ¯\_(ツ)_/¯
@@ -189,6 +192,7 @@ cc_library(
         "//xla/stream_executor:kernel_stats",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:rocm_rocdl_path",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",

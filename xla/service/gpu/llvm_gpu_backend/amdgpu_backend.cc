@@ -43,13 +43,15 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/escaping.h"
+#include "absl/strings/match.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/str_replace.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/tsl/platform/rocm_rocdl_path.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
@@ -66,8 +68,6 @@ limitations under the License.
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalVariable.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Metadata.h"
@@ -125,14 +125,6 @@ LLD_HAS_DRIVER(elf)
 #include "xla/service/gpu/llvm_gpu_backend/amdgpu_device_lib_data.h"
 #else
 constexpr const char* kAMDGPUDeviceLibData = "";
-#endif
-
-#ifndef XLA_ROCM_ENABLE_HCU
-#define XLA_ROCM_ENABLE_HCU 1
-#endif
-
-#ifndef HCU_CLANG_PATH
-#define HCU_CLANG_PATH "/opt/dtk/aillvm/bin"
 #endif
 
 namespace xla {
@@ -550,201 +542,11 @@ RegisterSpillInfo ExtractRegisterSpillingFromHsaco(
   return RegisterSpillInfo{};
 }
 
-std::string StripLlvmFunctionAttr(std::string ir, absl::string_view attr) {
-  size_t pos = 0;
-  while ((pos = ir.find(attr, pos)) != std::string::npos) {
-    ir.erase(pos, attr.size());
-  }
-  return ir;
-}
-
-std::string StripLlvmRangeAttr(std::string ir) {
-  size_t pos = 0;
-  while ((pos = ir.find(" range(", pos)) != std::string::npos) {
-    size_t close = ir.find(')', pos + 7);
-    if (close == std::string::npos) break;
-    ir.erase(pos, close + 1 - pos);
-  }
-  return ir;
-}
-
-std::string MakeLlvmIrCompatibleWithDtk(std::string ir) {
-  ir = StripLlvmFunctionAttr(std::move(ir), " captures(none)");
-  ir = StripLlvmRangeAttr(std::move(ir));
-  return absl::StrReplaceAll(
-      ir, {{"getelementptr inbounds nuw", "getelementptr inbounds"},
-           {"getelementptr nuw inbounds", "getelementptr inbounds"},
-           {"getelementptr nuw", "getelementptr"},
-           {" nneg ", " "}});
-}
-
-enum class RocmCodegenBackend {
-  kDefault,
-  kHcu,
-};
-
-RocmCodegenBackend GetRocmCodegenBackend(absl::string_view gfx) {
-#if XLA_ROCM_ENABLE_HCU
-  (void)gfx;
-  return RocmCodegenBackend::kHcu;
-#else
-  (void)gfx;
-  return RocmCodegenBackend::kDefault;
-#endif
-}
-
-bool ShouldUseHcuCodegen(absl::string_view gfx) {
-  return GetRocmCodegenBackend(gfx) == RocmCodegenBackend::kHcu;
-}
-
-std::vector<std::string> GetHcuClangSearchPaths() {
-  std::vector<std::string> search_paths;
-  search_paths.push_back(HCU_CLANG_PATH);
-  search_paths.push_back(tsl::io::JoinPath(tsl::RocmRoot(), "aillvm/bin"));
-  return search_paths;
-}
-
-absl::StatusOr<std::string> FindHcuClangTool() {
-  std::vector<std::string> path_storage = GetHcuClangSearchPaths();
-  std::vector<llvm::StringRef> path_refs;
-  path_refs.reserve(path_storage.size());
-  for (const std::string& path : path_storage) {
-    path_refs.push_back(path);
-  }
-  auto program = llvm::sys::findProgramByName("clang", path_refs);
-  if (!program) {
-    return xla::Internal("unable to find HCU clang in [%s]: %s",
-                         absl::StrJoin(path_storage, ", "),
-                         program.getError().message());
-  }
-  return *program;
-}
-
-absl::Status ExecuteHcuClang(absl::string_view step,
-                             const std::string& clang_program,
-                             const std::vector<std::string>& args_storage) {
-  std::vector<llvm::StringRef> args;
-  args.reserve(args_storage.size());
-  for (const std::string& arg : args_storage) {
-    args.push_back(arg);
-  }
-
-  std::string error_message;
-  int result = llvm::sys::ExecuteAndWait(clang_program, args, std::nullopt, {},
-                                         0, 0, &error_message);
-  if (result) {
-    return xla::Internal("HCU clang %s failed: %s, error code %d",
-                         std::string(step), error_message, result);
-  }
-  return absl::OkStatus();
-}
-
-absl::Status CompileModuleToHsacoWithHcu(
-    llvm::Module* module, llvm::TargetMachine* target_machine,
-    absl::string_view gfx, absl::string_view ir_path,
-    absl::string_view asm_path, absl::string_view hsaco_path) {
-  // HCU codegen lacks some boolean-to-bfloat conversion patterns.
-  for (llvm::Function& function : *module) {
-    for (llvm::BasicBlock& block : function) {
-      for (auto it = block.begin(); it != block.end();) {
-        auto* cast = llvm::dyn_cast<llvm::UIToFPInst>(&*it++);
-        if (cast == nullptr || !cast->getSrcTy()->isIntegerTy(1) ||
-            !cast->getDestTy()->isBFloatTy()) {
-          continue;
-        }
-        llvm::IRBuilder<> builder(cast);
-        auto* one = llvm::ConstantFP::get(cast->getDestTy(), 1.0);
-        auto* zero = llvm::ConstantFP::get(cast->getDestTy(), 0.0);
-        cast->replaceAllUsesWith(
-            builder.CreateSelect(cast->getOperand(0), one, zero));
-        cast->eraseFromParent();
-      }
-    }
-  }
-
-  std::string ir;
-  llvm::raw_string_ostream ir_stream(ir);
-  module->setDataLayout(target_machine->createDataLayout());
-  module->print(ir_stream, nullptr);
-  ir_stream.flush();
-  ir = MakeLlvmIrCompatibleWithDtk(std::move(ir));
-
-  std::error_code ec;
-  llvm::raw_fd_ostream ir_fs(llvm_ir::AsStringRef(ir_path), ec,
-                             llvm::sys::fs::OF_None);
-  if (ec) {
-    return xla::Internal("unable to open LLVM IR file %s: %s",
-                         std::string(ir_path), ec.message());
-  }
-  ir_fs << ir;
-  ir_fs.close();
-
-  TF_ASSIGN_OR_RETURN(std::string clang_program, FindHcuClangTool());
-
-  // Register-file class of the part, mirroring `_get_clang_args` in the Triton
-  // HCU backend: gfx936/gfx938 have a 768-entry VGPR file, other HCU parts 512.
-  std::string vgpr_support;
-  if (gfx == "gfx936" || gfx == "gfx938") {
-    vgpr_support = "-support-768-vgprs=true";
-  } else if (gfx == "gfx928" || gfx == "gfx946" || gfx == "gfx92a") {
-    vgpr_support = "-support-512-vgprs=true";
-  } else {
-    vgpr_support = "-support-512-vgprs=true";
-  }
-  const std::vector<std::string> clang_asm_args{
-      "clang",
-      "-cc1",
-      "-O3",
-      "-x",
-      "ir",
-      "-S",
-      "-triple",
-      "amdgcn-amd-amdhsa",
-      "-target-cpu",
-      std::string(gfx),
-      // Matches the Triton HCU backend's `-mcpu=<arch>:xnack-`: without it the
-      // backend reserves the xnack mask (2 SGPRs/kernel, counted in
-      // NumSGPRsForWavesPerEU).
-      "-target-feature",
-      "-xnack",
-      "-mllvm",
-      "-enable-detailed-clobber-check=true",
-      "-mllvm",
-      vgpr_support,
-      // Experiment: the HCU latency model (reference `sched_latency=mmac5-ds10`).
-      "-mllvm",
-      "-enable-latency-hack=true",
-      "-mllvm",
-      "-mmac-latency=5",
-      "-mllvm",
-      "-ds-load-store-latency=10",
-      std::string(ir_path),
-      "-o",
-      std::string(asm_path),
-  };
-  TF_RETURN_IF_ERROR(
-      ExecuteHcuClang("LLVM IR to assembly", clang_program, clang_asm_args));
-
-  const std::vector<std::string> clang_hsaco_args{
-      "clang",
-      "-x",
-      "assembler",
-      "-target",
-      "amdgcn-amd-amdhsa",
-      absl::StrCat("-mcpu=", gfx, ":xnack-"),
-      std::string(asm_path),
-      "-o",
-      std::string(hsaco_path),
-  };
-  return ExecuteHcuClang("assembly to HSACO", clang_program, clang_hsaco_args);
-}
-
 // Emits the given module to HSA Code Object. target_machine is an initialized
 // TargetMachine for the AMDGPU target.
 absl::StatusOr<std::string> EmitModuleToHsaco(
     llvm::Module* module, llvm::TargetMachine* target_machine,
-    const DebugOptions& debug_options, absl::string_view gfx,
-    absl::string_view feature_str) {
+    const DebugOptions& debug_options) {
   auto* env = tsl::Env::Default();
   std::vector<std::string> tempdir_vector;
   env->GetLocalTempDirectories(&tempdir_vector);
@@ -766,30 +568,23 @@ absl::StatusOr<std::string> EmitModuleToHsaco(
   };
 
   std::string ir_path = gen_path(".ll"), ir_opt_path = gen_path("_opt.ll"),
-              asm_path = gen_path(".s"), isabin_path = gen_path(".o"),
-              hsaco_path = gen_path(".hsaco");
+              isabin_path = gen_path(".o"), hsaco_path = gen_path(".hsaco");
 
   absl::Cleanup cleanup = [&] {
     if (!HsacoCache::i().KeepTempFiles()) {
       std::remove(ir_path.c_str());
-      std::remove(asm_path.c_str());
       std::remove(isabin_path.c_str());
       std::remove(ir_opt_path.c_str());
     }
   };
 
   std::error_code ec;
-  if (ShouldUseHcuCodegen(gfx)) {
-    VLOG(1) << "Using HCU ROCm codegen for " << gfx;
-    TF_RETURN_IF_ERROR(CompileModuleToHsacoWithHcu(
-        module, target_machine, gfx, ir_path, asm_path, hsaco_path));
-  } else {
-    {  // Dump LLVM IR.
-      llvm::raw_fd_ostream ir_fs(ir_path, ec, llvm::sys::fs::OF_None);
-      module->print(ir_fs, nullptr);
-    }
+  {  // Dump LLVM IR.
+    llvm::raw_fd_ostream ir_fs(ir_path, ec, llvm::sys::fs::OF_None);
+    module->print(ir_fs, nullptr);
+  }
 
-    // Emit GCN ISA binary.
+  {  // Emit GCN ISA binary.
     llvm::legacy::PassManager pm;
     pm.add(new llvm::TargetLibraryInfoWrapperPass(
         llvm::Triple(module->getTargetTriple())));
@@ -806,9 +601,6 @@ absl::StatusOr<std::string> EmitModuleToHsaco(
     module->print(ir_fs, nullptr);
   }
 
-  if (ShouldUseHcuCodegen(gfx)) {
-    return hsaco_path;
-  }
 #ifdef HAS_SUPPORT_FOR_LLD_AS_A_LIBRARY
   static absl::Mutex lld_mu(absl::kConstInit);
 
@@ -838,6 +630,226 @@ absl::StatusOr<std::string> EmitModuleToHsaco(
 
   return hsaco_path;
 }
+
+#if XLA_ROCM_ENABLE_HCU
+absl::Status ExecuteHcuClang(const std::string& clang_program,
+                             const std::vector<std::string>& args) {
+  std::vector<llvm::StringRef> argv;
+  argv.reserve(args.size());
+  for (const std::string& arg : args) {
+    argv.push_back(llvm_ir::AsStringRef(arg));
+  }
+
+  std::string error_message;
+  const int result = llvm::sys::ExecuteAndWait(
+      clang_program, llvm_ir::AsArrayRef(argv), std::nullopt, {}, 0, 0,
+      &error_message);
+  if (result != 0) {
+    return xla::Internal("HCU clang execution failed: %s, error code %d",
+                         error_message, result);
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<std::string> FindHcuClangProgram() {
+  std::string clang_path = std::getenv("HCU_CLANG_PATH")
+                               ? std::getenv("HCU_CLANG_PATH")
+                               : "/opt/dtk/aillvm/bin";
+  if (clang_path.size() >= 5 &&
+      clang_path.compare(clang_path.size() - 5, 5, "clang") == 0 &&
+      tsl::Env::Default()->FileExists(clang_path).ok()) {
+    return clang_path;
+  }
+  auto clang_program = llvm::sys::findProgramByName(
+      "clang", {llvm_ir::AsStringRef(clang_path)});
+  if (!clang_program) {
+    return xla::Internal("Unable to find HCU clang in %s: %s", clang_path,
+                         clang_program.getError().message());
+  }
+  return *clang_program;
+}
+
+// Removes the `nuw`/`nusw` nowrap flags that LLVM 21+ prints on getelementptr instructions. 
+std::string StripGepNoWrapFlags(std::string ir) {
+  static constexpr absl::string_view kFlags[] = {" nuw", " nusw"};
+  size_t line_start = 0;
+  while (line_start < ir.size()) {
+    size_t line_end = ir.find('\n', line_start);
+    if (line_end == std::string::npos) line_end = ir.size();
+    if (ir.find("getelementptr", line_start) < line_end) {
+      for (absl::string_view flag : kFlags) {
+        size_t pos = line_start;
+        while ((pos = ir.find(flag, pos)) != std::string::npos &&
+               pos < line_end) {
+          ir.erase(pos, flag.size());
+          line_end -= flag.size();
+        }
+      }
+    }
+    line_start = line_end + 1;
+  }
+  return ir;
+}
+
+// Removes `/* ... */` comments from serialized IR that LLVM 21+ prints them inline.
+std::string StripInlineComments(std::string ir) {
+  std::string out;
+  out.reserve(ir.size());
+  bool in_string = false;
+  for (size_t i = 0; i < ir.size(); ++i) {
+    const char c = ir[i];
+    if (in_string) {
+      if (c == '\\' && i + 1 < ir.size()) {
+        out.push_back(c);
+        out.push_back(ir[++i]);
+        continue;
+      }
+      out.push_back(c);
+      if (c == '"') in_string = false;
+      continue;
+    }
+    if (c == '"') {
+      in_string = true;
+      out.push_back(c);
+      continue;
+    }
+    if (c == '/' && i + 1 < ir.size() && ir[i + 1] == '*') {
+      const size_t end = ir.find("*/", i + 2);
+      if (end == std::string::npos) {
+        out.append(ir, i, std::string::npos);
+        break;
+      }
+      out.push_back(' ');  // keep neighboring tokens separated
+      i = end + 1;
+      continue;
+    }
+    out.push_back(c);
+  }
+  return out;
+}
+
+absl::StatusOr<std::string> OptimizeAndEmitModuleToHsacoByHcu(
+    llvm::Module* module, absl::string_view gfx_version,
+    int32_t optimization_level) {
+  std::vector<std::string> temp_directories;
+  tsl::Env::Default()->GetLocalTempDirectories(&temp_directories);
+  if (temp_directories.empty()) {
+    return xla::Internal(
+        "Unable to locate a temporary directory for HCU compilation artifacts.");
+  }
+  const std::string prefix = tsl::io::JoinPath(
+      temp_directories.front(),
+      absl::StrCat(module->getModuleIdentifier(), tsl::random::New64()));
+  const std::string ir_path = prefix + ".ll";
+  const std::string asm_path = prefix + ".asm";
+  const std::string hsaco_path = prefix + ".hsaco";
+
+  // HCU clang is based on LLVM 18, so it cannot parse attributes that newer LLVM releases emit in xla 0.11.0.
+  static constexpr llvm::Attribute::AttrKind kUnsupportedParamAttributes[] = {
+      llvm::Attribute::Captures,      llvm::Attribute::NoFPClass,
+      llvm::Attribute::Range,         llvm::Attribute::Initializes,
+      llvm::Attribute::DeadOnUnwind,  llvm::Attribute::Writable,
+      llvm::Attribute::NoFree};
+  static constexpr llvm::Attribute::AttrKind kUnsupportedReturnAttributes[] = {
+      llvm::Attribute::NoFPClass, llvm::Attribute::Range};
+  for (llvm::Function& function : *module) {
+    // HCU LLVM 18 not support this declaration.
+    llvm::AttributeList attributes = function.getAttributes();
+    llvm::AttributeList updated_attributes = attributes;
+    bool changed = false;
+    for (unsigned index = 0; index < function.arg_size(); ++index) {
+      llvm::AttributeSet parameter_attributes = attributes.getParamAttrs(index);
+      if (parameter_attributes.hasAttribute(llvm::Attribute::Dereferenceable) &&
+          parameter_attributes.getDereferenceableBytes() == 0) {
+        updated_attributes = updated_attributes.removeParamAttribute(
+            function.getContext(), index, llvm::Attribute::Dereferenceable);
+        changed = true;
+      }
+      for (llvm::Attribute::AttrKind kind : kUnsupportedParamAttributes) {
+        if (parameter_attributes.hasAttribute(kind)) {
+          updated_attributes = updated_attributes.removeParamAttribute(
+              function.getContext(), index, kind);
+          changed = true;
+        }
+      }
+    }
+    for (llvm::Attribute::AttrKind kind : kUnsupportedReturnAttributes) {
+      if (attributes.getRetAttrs().hasAttribute(kind)) {
+        updated_attributes = updated_attributes.removeRetAttribute(
+            function.getContext(), kind);
+        changed = true;
+      }
+    }
+    if (attributes.hasFnAttr(llvm::Attribute::Memory)) {
+      updated_attributes = updated_attributes.removeFnAttribute(
+          function.getContext(), llvm::Attribute::Memory);
+      changed = true;
+    }
+    if (changed) {
+      function.setAttributes(updated_attributes);
+    }
+  }
+
+  std::error_code error;
+  {
+    std::string ir;
+    {
+      llvm::raw_string_ostream os(ir);
+      module->print(os, nullptr);
+    }
+
+    // Process ir to suppport hcu low version llvm.
+    ir = StripGepNoWrapFlags(std::move(ir));
+    ir = StripInlineComments(std::move(ir));
+
+    llvm::raw_fd_ostream stream(ir_path, error, llvm::sys::fs::OF_None);
+    if (error) {
+      return xla::Internal("Unable to write HCU LLVM IR %s: %s", ir_path,
+                           error.message());
+    }
+    stream << ir;
+  }
+
+  ABSL_ASSIGN_OR_RETURN(std::string clang_program, FindHcuClangProgram());
+  const std::string opt_level = absl::StrCat("-O", std::clamp(optimization_level, 0, 3));
+  // VGPR class of the part, mirroring _get_clang_args in the Triton HCU backend.
+  const std::string vgpr_support =
+      stream_executor::RocmComputeCapability(std::string(gfx_version))
+              .hcu_768_vgpr()
+          ? "-support-768-vgprs=true"
+          : "-support-512-vgprs=true";
+  std::vector<std::string> assembly_args{
+      "clang", "-cc1", "-x", "ir", opt_level,
+      "-mllvm", "-disable-code-sink",
+      "-mllvm", "-disable-machine-sink", "-S",
+      "-triple", "amdgcn-amd-amdhsa", "-target-cpu",
+      std::string(gfx_version),
+      // Matches the Triton HCU backend's -mcpu=<arch>:xnack-.
+      "-target-feature", "-xnack",
+      "-mllvm", "-enable-detailed-clobber-check=true",
+      "-mllvm", vgpr_support,
+      // HCU latency model, matching the reference sched_latency=mmac5-ds10.
+      "-mllvm", "-enable-latency-hack=true",
+      "-mllvm", "-mmac-latency=5",
+      "-mllvm", "-ds-load-store-latency=10",
+      ir_path, "-o", asm_path};
+  ABSL_RETURN_IF_ERROR(ExecuteHcuClang(clang_program, assembly_args));
+
+  std::vector<std::string> hsaco_args{
+      // The assembler stage never runs the optimizer, so -O would be unused.
+      "clang", "-x", "assembler",
+      "-target", "amdgcn-amd-amdhsa",
+      absl::StrCat("-mcpu=", gfx_version, ":xnack-"), asm_path, "-o",
+      hsaco_path};
+  ABSL_RETURN_IF_ERROR(ExecuteHcuClang(clang_program, hsaco_args));
+
+  if (!HsacoCache::i().KeepTempFiles()) {
+    std::remove(ir_path.c_str());
+    std::remove(asm_path.c_str());
+  }
+  return hsaco_path;
+}
+#endif  // XLA_ROCM_ENABLE_HCU
 
 absl::Status AMDGPUTargetModuleLinker(llvm::Module* module,
                                       se::GpuComputeCapability gpu_version,
@@ -947,8 +959,12 @@ absl::StatusOr<amdgpu::HsacoResult> CompileToHsacoInternal(
   llvm::Triple default_target_triple("amdgcn--amdhsa-amdgiz");
   // Construct LLVM TargetMachine for AMDGPU.
   auto [gfx, feature_str] = GetFeatureStrFromGCNArchName(cc->gcn_arch_name());
-  auto target_machine =
-      GetTargetMachine(default_target_triple, gfx, debug_options, feature_str);
+  // Upstream LLVM has no entry for vendor-only arch names such as gfx936 and
+  // warns about them; the HCU clang below honors the real device arch.
+  const std::string inproc_cpu =
+      llvm::AMDGPU::getIsaVersion(gfx).Major != 0 ? gfx : std::string();
+  auto target_machine = GetTargetMachine(default_target_triple, inproc_cpu,
+                                         debug_options, feature_str);
 
   // Link with ROCm-Device-Libs, and optimize the LLVM module.
   RETURN_IF_ERROR(gpu::LinkAndOptimizeModule(
@@ -956,10 +972,18 @@ absl::StatusOr<amdgpu::HsacoResult> CompileToHsacoInternal(
       default_target_triple, target_machine.get(), kAMDGPUInlineThreshold));
 
   // Lower optimized LLVM module to HSA code object.
-  ASSIGN_OR_RETURN(
-      std::string hsaco_path,
-      EmitModuleToHsaco(module, target_machine.get(), debug_options, gfx,
-                        feature_str));
+  std::string hsaco_path;
+#if XLA_ROCM_ENABLE_HCU
+  ABSL_ASSIGN_OR_RETURN(
+      hsaco_path,
+      OptimizeAndEmitModuleToHsacoByHcu(
+          module, cc->gfx_version(),
+          debug_options.xla_backend_optimization_level()));
+#else
+  ABSL_ASSIGN_OR_RETURN(
+      hsaco_path,
+      EmitModuleToHsaco(module, target_machine.get(), debug_options));
+#endif
 
   // Check for register spilling using HSACO metadata
   VLOG(2) << "Checking for register spilling in: "
@@ -1086,6 +1110,25 @@ absl::Status LinkROCDLIfNecessary(llvm::Module* module,
 
   auto [major, minor, stepping] = llvm::AMDGPU::getIsaVersion(gfx_version);
 
+  // Upstream LLVM has no entry for the DTK/HCU gfx9 targets, so getIsaVersion
+  // returns an all-zero version for them. Derive the version from the
+  // architecture name instead ("gfx936" -> major 9, minor 3, stepping 6) so
+  // device-library specialization still gets a plausible ISA version. The
+  // final code generation is performed by the DTK HCU clang.
+  if (major == 0 && absl::StartsWith(gfx_version, "gfx")) {
+    std::string digits(gfx_version.substr(3));
+    if (digits.size() >= 2) {
+      major = digits[0] - '0';
+      minor = digits[1] - '0';
+      if (digits.size() > 2) {
+        int parsed_stepping = 0;
+        if (absl::SimpleHexAtoi(digits.substr(2), &parsed_stepping)) {
+          stepping = parsed_stepping;
+        }
+      }
+    }
+  }
+
   CHECK(major != 0) << "Could not parse gfx_version.";
 
   // TODO(rocm): Not great, not terrible
@@ -1193,6 +1236,11 @@ absl::StatusOr<HsacoResult> CompileToHsaco(
     sha256.update(llvm::ArrayRef(reinterpret_cast<const uint8_t*>(&param),
                                  sizeof(param)));
   }
+#if XLA_ROCM_ENABLE_HCU
+  sha256.update("hcu");
+#else
+  sha256.update("amdgpu");
+#endif
   HsacoCache::HashType binary_hash = sha256.final();
 
   HsacoResult compile_result;
