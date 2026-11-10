@@ -780,8 +780,8 @@ cc_library(
 
 exports_files([
     "buffer_comparator_kernel_lib.cu.h",
-    "buffer_debug_float_check_kernel_lib.cu.h",
-    "buffer_debug_xor_checksum_kernel_lib.cu.h",
+    "buffer_debug_float_check_kernel_lib.cu.h.inc",
+    "buffer_debug_xor_checksum_kernel_lib.cu.h.inc",
     "collective_signal.cu.h",
     "all_reduce_kernel_lib.cu.h",
     "multi_gpu_barrier_kernel.cu.h",

@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <hip/hip_runtime.h>
+
 #include <cstdint>
 
 #include "absl/base/casts.h"
-#include <hip/hip_runtime.h>
 #include "xla/stream_executor/gpu/buffer_debug_xor_checksum_kernel.h"
-#include "xla/stream_executor/gpu/buffer_debug_xor_checksum_kernel_lib.cu.h"
+#include "xla/stream_executor/gpu/buffer_debug_xor_checksum_kernel_lib.cu.h.inc"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
