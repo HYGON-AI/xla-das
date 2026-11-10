@@ -146,13 +146,13 @@ static absl::StatusOr<hipblasLtEpilogue_t> AsHipblasLtEpilogue(
     case gpu::BlasLt::Epilogue::kBiasThenGELUWithAux:
       return HIPBLASLT_EPILOGUE_GELU_AUX_BIAS;
     case gpu::BlasLt::Epilogue::kSILU:
-#if defined(HIPBLASLT_EPILOGUE_SWISH_EXT)
+#if TF_ROCM_VERSION >= 70000
       return HIPBLASLT_EPILOGUE_SWISH_EXT;
 #else
       return absl::InternalError("Unsupported epilogue: kSILU");
 #endif
     case gpu::BlasLt::Epilogue::kBiasThenSILU:
-#if defined(HIPBLASLT_EPILOGUE_SWISH_BIAS_EXT)
+#if TF_ROCM_VERSION >= 70000
       return HIPBLASLT_EPILOGUE_SWISH_BIAS_EXT;
 #else
       return absl::InternalError("Unsupported epilogue: kBiasThenSILU");
