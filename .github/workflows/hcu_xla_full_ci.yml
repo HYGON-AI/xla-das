@@ -1,0 +1,130 @@
+# Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+# SPDX-License-Identifier: Apache-2.0
+
+# Organization variables consumed below:
+#   RESOURCE_SERVER_URL             server resources url
+#
+# Repositories variables consumed below:
+#   HCU_IMAGE_REGISTRY              registry serving the HCU DTK image, "<registry>"
+#   HCU_DTK_VERSION                 optional, default set to 26.10. Selects the DTK image tag.
+
+name: HCU XLA FULL CI
+permissions:
+  contents: read
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "xla/**"
+      - "third_party/gpus/**"
+      - "third_party/llvm/**"
+      - "third_party/triton/**"
+      - "build_tools/hcu/**"
+      - "BUILD.bazel"
+      - "MODULE.bazel"
+      - "WORKSPACE"
+      - ".bazelrc"
+      - ".github/workflows/hcu_xla_full_ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build:
+    name: Build Xla
+    runs-on: hygon-build
+    timeout-minutes: 90
+    env:
+      DTK_VERSION: ${{ vars.HCU_DTK_VERSION || '26.10' }}
+      RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
+    container:
+      image: ${{ vars.HCU_IMAGE_REGISTRY }}/hcu/base/dtk:${{ vars.HCU_DTK_VERSION || '26.10' }}-rockylinux8.6-py3.12
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checking out xla-das
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: xla-das
+          persist-credentials: false
+      
+      - name: Install HCU LLVM, bazelisk and node
+        working-directory: xla-das
+        run: bash build_tools/hcu/setup_hcu_ci_env.sh
+
+      - name: Build XLA test binaries
+        working-directory: xla-das
+        run: |
+          source /opt/dtk/env.sh
+          bash build_tools/hcu/run_xla_full_ci.sh \
+            --build \
+            --config=hcu \
+            --config=ci_single_gpu \
+            --config=hcu_sgpu \
+            --local_test_jobs=8
+
+  test:
+    name: Run XLA Full Test
+    needs: build
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    runs-on: hygon-bw1100-8card
+    timeout-minutes: 240
+    env:
+      DTK_VERSION: ${{ vars.HCU_DTK_VERSION || '26.10' }}
+      RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
+    container:
+      image: ${{ vars.HCU_IMAGE_REGISTRY }}/hcu/base/dtk:${{ vars.HCU_DTK_VERSION || '26.10' }}-rockylinux8.6-py3.12
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checking out xla-das
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: xla-das
+          persist-credentials: false
+      
+      - name: Install HCU LLVM, bazelisk and node
+        working-directory: xla-das
+        run: bash build_tools/hcu/setup_hcu_ci_env.sh
+
+      - name: Device info
+        run: |
+          lscpu
+          source /opt/dtk/env.sh
+          "${ROCM_PATH:-/opt/dtk}/bin/rocminfo"
+
+      - name: Test XLA [single_gpu]
+        working-directory: xla-das
+        run: |
+          source /opt/dtk/env.sh
+          bash build_tools/hcu/run_xla_full_ci.sh \
+            --test \
+            --config=hcu \
+            --config=ci_single_gpu \
+            --config=hcu_sgpu \
+            --local_test_jobs=8
+
+      - name: Test XLA [multi_gpu]
+        working-directory: xla-das
+        run: |
+          source /opt/dtk/env.sh
+          bash build_tools/hcu/run_xla_full_ci.sh \
+            --test \
+            --config=hcu \
+            --config=ci_multi_gpu \
+            --config=hcu_mgpu \
+            --local_test_jobs=1
+
+      - name: Upload XLA test artifacts
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hcu-xla-full-ci-artifacts-${{ github.run_id }}
+          path: xla-das/ci-artifacts/
+          retention-days: 7
