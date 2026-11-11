@@ -2,28 +2,26 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Provision an HCU build/test environment on top of a bare compile image: the
-# BASE_COMPILE_IMAGE_ROCKY_PY311 base ships neither DTK nor a build toolchain.
+# Provision an HCU build/test environment inside the HCU DTK image.
 #
-#   1. DTK      -> ${DTK_DIR}          env.sh, rocminfo, hip runtime
-#   2. HCU LLVM -> ${DTK_DIR}/aillvm   clang used by --config=hcu
-#   3. bazelisk -> /usr/local/bin/bazel
-#   4. node     -> /usr/local/node     symlinked into /usr/local/bin
-#   5. DTK 26.04: hipBLASLt Tensile kernel dir -> HIPBLASLT_TENSILE_LIBPATH
+#   1. HCU LLVM -> ${DTK_DIR}/aillvm   clang used by --config=hcu
+#   2. bazelisk -> /usr/local/bin/bazel
+#   3. node     -> /usr/local/node     symlinked into /usr/local/bin
+#   4. hipBLASLt Tensile kernel dir -> HIPBLASLT_TENSILE_LIBPATH
 #
 # Required:
-#   DTK_VERSION           e.g. 26.04. The download URL is derived from it.
+#   DTK_VERSION           e.g. 26.10, selects the HCU LLVM major.
 #   RESOURCE_SERVER_URL   internal host serving ai_cc/Nightly/hcu_llvm_installer.sh.
 #                         Injected from a repository secret, no default here.
 # Optional:
-#   DTK_DIR               install prefix, defaults to /opt/dtk
+#   DTK_DIR               DTK root inside the image, defaults to /opt/dtk
 #   AILLVM_MAJOR          26.04 -> 1.0.0, 26.10 and later -> 2.0.0
 #   BAZELISK_VERSION      defaults to 1.28.1
 #   NODE_VERSION          defaults to 26.7.0
 
 set -euo pipefail
 
-DTK_VERSION="${DTK_VERSION:-26.04}"
+DTK_VERSION="${DTK_VERSION:-26.10}"
 RESOURCE_SERVER_URL="${RESOURCE_SERVER_URL:-}"
 DTK_DIR="${DTK_DIR:-/opt/dtk}"
 
@@ -53,21 +51,12 @@ derive_aillvm_major() {
 AILLVM_MAJOR=$(derive_aillvm_major)
 echo "DTK ${DTK_VERSION} -> HCU LLVM major ${AILLVM_MAJOR}"
 
+if [[ ! -f "${DTK_DIR}/env.sh" ]]; then
+    echo "ERROR: ${DTK_DIR}/env.sh not found; DTK must come from the CI image." >&2
+    exit 1
+fi
+
 WGET_OPTS=(--timeout=30 --tries=3 -q)
-
-install_dtk() {
-    local url="https://download.sourcefind.cn:65024/file/1/DTK-${DTK_VERSION}/Rocky8.6/DTK-${DTK_VERSION}-Rocky8.6-x86_64.tar.gz"
-
-    wget "${WGET_OPTS[@]}" "${url}" -O /tmp/dtk.tar.gz
-    mkdir -p "${DTK_DIR}"
-    tar -xzf /tmp/dtk.tar.gz -C "${DTK_DIR}" --strip-components=1
-    rm -rf /tmp/dtk.tar.gz
-
-    if [[ ! -f "${DTK_DIR}/env.sh" ]]; then
-        echo "ERROR: ${DTK_DIR}/env.sh missing after extraction." >&2
-        exit 1
-    fi
-}
 
 install_aillvm() {
     wget "${WGET_OPTS[@]}" --no-check-certificate "${RESOURCE_SERVER_URL%/}/ai_cc/Nightly/hcu_llvm_installer.sh" -O /tmp/hcu_llvm_installer.sh
@@ -148,13 +137,10 @@ pin_hipblaslt_tensile_libpath() {
         source "${DTK_DIR}/env.sh"
         detect_hcu_arch
         set -u
-    ) || {
-        echo "ERROR: Command substitution failed with exit code $?" >&2
-        exit 1
-    }
+    ) || true
     if [[ -z "${arch}" ]]; then
-        echo "ERROR: cannot detect an HCU with rocminfo in ${DTK_DIR}/bin." >&2
-        exit 1
+        echo "WARNING: no HCU detected (build-only runner), skipping the hipBLASLt Tensile pin." >&2
+        return 0
     fi
     echo "HCU device arch: ${arch}"
 
@@ -186,7 +172,6 @@ pin_hipblaslt_tensile_libpath() {
     fi
 }
 
-install_dtk
 install_aillvm
 install_bazelisk
 install_node
