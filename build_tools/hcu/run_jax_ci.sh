@@ -73,9 +73,16 @@ TESTS_TO_IGNORE=(
 )
 
 GPU_MODE="single_gpu"
+BUILD_ONLY=0
 BAZEL_ARGS=()
 for arg in "$@"; do
     case "$arg" in
+        --build)
+            BUILD_ONLY=1
+            ;;
+        --test)
+            BUILD_ONLY=0
+            ;;
         --single_gpu)
             GPU_MODE="single_gpu"
             ;;
@@ -110,11 +117,16 @@ if [[ -z "$ROCMINFO" || ! -x "$ROCMINFO" ]]; then
   exit 1
 fi
 
-TF_GPU_COUNT=$("$ROCMINFO" | grep -c "Name: *gfx")
+TF_GPU_COUNT=$("$ROCMINFO" | grep -c "Name: *gfx" || true)
 TF_TESTS_PER_GPU=${TF_TESTS_PER_GPU:-4}
 if [[ "$TF_GPU_COUNT" -eq 0 ]]; then
-  echo "No HCU devices reported by ${ROCMINFO}." >&2
-  exit 1
+  if ((BUILD_ONLY)); then
+    echo "No HCU devices reported by ${ROCMINFO}; building the test binaries only." >&2
+    TF_GPU_COUNT=1
+  else
+    echo "No HCU devices reported by ${ROCMINFO}." >&2
+    exit 1
+  fi
 fi
 
 echo "HCU devices: ${TF_GPU_COUNT}, tests per device: ${TF_TESTS_PER_GPU}"
@@ -147,10 +159,59 @@ if [[ -n "${HIPBLASLT_TENSILE_LIBPATH:-}" ]]; then
     HIPBLASLT_TEST_ENV_ARGS+=("--test_env=HIPBLASLT_TENSILE_LIBPATH=${HIPBLASLT_TENSILE_LIBPATH}")
 fi
 
+DISK_CACHE_DIR="/ci_public/${GITHUB_REPOSITORY#*/}/runs/jax-bazel-cache"
+CACHE_ARGS=()
+if mkdir -p "${DISK_CACHE_DIR}/repository" 2>/dev/null; then
+    CACHE_ARGS+=(
+        --disk_cache="${DISK_CACHE_DIR}"
+        --repository_cache="${DISK_CACHE_DIR}/repository"
+    )
+else
+    echo "WARNING: ${DISK_CACHE_DIR} is not writable, running without the bazel cache." >&2
+fi
+
+JOBS_ARGS=()
+if [[ -n "${MAX_JOBS:-}" ]]; then
+    JOBS_ARGS+=(--jobs="${MAX_JOBS}")
+fi
+
+COMMAND_ARGS=(test)
+if ((BUILD_ONLY)); then
+    COMMAND_ARGS=(build)
+fi
+
+ARTIFACTS_DIR="${ARTIFACTS_DIR:-ci-artifacts}"
+PROFLOG_DIR="${ARTIFACTS_DIR}/proflogs"
+TESTLOG_DIR="${ARTIFACTS_DIR}/testlogs"
+BAZEL_LOG="${ARTIFACTS_DIR}/bazel-$(date +%Y%m%d-%H%M%S).log"
+mkdir -p "${PROFLOG_DIR}"
+
+collect_failed_test_logs() {
+    local log="$1"
+    local dest="$2"
+    local target rel
+    [[ -f "${log}" && -d bazel-testlogs ]] || return 0
+    {
+        # "FAIL: //pkg:target (see ...test.log)" and "//pkg:target FAILED in 3 out of 3"
+        sed -e 's/\x1b\[[0-9;]*m//g' "${log}" \
+            | grep -oE '^(FAIL|TIMEOUT|FLAKY|INCOMPLETE): //[^ ]+' | sed -e 's/^[A-Z]*: //'
+        sed -e 's/\x1b\[[0-9;]*m//g' "${log}" \
+            | awk '/^\/\// && /(FAILED|TIMEOUT|FLAKY|INCOMPLETE|NO STATUS)/ {print $1}'
+    } | sed -e 's/(.*//' | sort -u | while read -r target; do
+        rel="${target#//}"
+        rel="${rel/:/\/}"
+        if [[ -n "${target}" && "${target}" == //* && -e "bazel-testlogs/${rel}" ]]; then
+            mkdir -p "${dest}/${rel}"
+            cp -a "bazel-testlogs/${rel}/." "${dest}/${rel}/" 2>/dev/null || true
+            echo "collected test log: ${dest}/${rel}"
+        fi
+    done
+}
+
 # Don't abort before the test XMLs are collected.
 set +e
 
-bazel --bazelrc=build/rocm/rocm.bazelrc test \
+bazel --bazelrc=build/rocm/rocm.bazelrc "${COMMAND_ARGS[@]}" \
     --config=rocm \
     --config="${HCU_CODEGEN_CONFIG}" \
     $OVERRIDE_XLA_REPO \
@@ -173,6 +234,9 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
     --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
+    --profile="${PROFLOG_DIR}/profile.json.gz" \
+    "${CACHE_ARGS[@]}" \
+    "${JOBS_ARGS[@]}" \
     --test_output=errors \
     --test_verbose_timeout_warnings \
     --build_tag_filters="${TAG_FILTERS}" \
@@ -189,12 +253,18 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     //tests/pallas:gpu_tests \
     //tests/pallas:backend_independent_tests \
     //jaxlib/tools:check_gpu_wheel_sources_test \
-    "${TESTS_TO_IGNORE[@]}"
+    "${TESTS_TO_IGNORE[@]}" 2>&1 | tee "${BAZEL_LOG}"
 
-bazel_retval=$?
+bazel_retval=${PIPESTATUS[0]}
 
 set -e
 
-bash ci/utilities/collect_bazel_test_xmls.sh test-artifacts
+collect_failed_test_logs "${BAZEL_LOG}" "${TESTLOG_DIR}"
+
+if ((BUILD_ONLY)); then
+    echo "build only: no test XML files to collect."
+else
+    bash ci/utilities/collect_bazel_test_xmls.sh "${ARTIFACTS_DIR}"
+fi
 
 exit "${bazel_retval}"
