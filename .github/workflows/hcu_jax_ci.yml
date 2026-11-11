@@ -1,0 +1,142 @@
+# Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+# SPDX-License-Identifier: Apache-2.0
+
+# Organization variables consumed below:
+#   RESOURCE_SERVER_URL             server resources url
+#
+# Repositories variables consumed below:
+#   HCU_IMAGE_REGISTRY              registry serving the HCU DTK image, "<registry>"
+#   HCU_PYTHON_VERSION              optional, default set to 3.12
+#   HCU_JAX_DAS_REPO                optional, default set to HYGON-AI/jax-das
+#   HCU_JAX_DAS_REF                 optional, overrides the jax-das branch below
+#   HCU_DTK_VERSION                 optional, default set to 26.10.
+
+name: HCU JAX CI
+permissions:
+  contents: read
+env:
+  HCU_JAX_DAS_BRANCH: ${{ vars.HCU_JAX_DAS_REF || (github.ref_name == 'dev' && 'dev' || 'main') }}
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build:
+    name: Build JAX
+    runs-on: hygon-build
+    timeout-minutes: 240
+    env:
+      DTK_VERSION: ${{ vars.HCU_DTK_VERSION || '26.10' }}
+      RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
+    container:
+      image: ${{ vars.HCU_IMAGE_REGISTRY }}/hcu/base/dtk:${{ vars.HCU_DTK_VERSION || '26.10' }}-rockylinux8.6-py3.12
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checking out xla-das
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: xla-das
+          persist-credentials: false
+
+      - name: Install HCU LLVM, bazelisk and node
+        working-directory: xla-das
+        run: bash build_tools/hcu/setup_hcu_ci_env.sh
+
+      - name: Checkout jax-das
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ vars.HCU_JAX_DAS_REPO || 'HYGON-AI/jax-das' }}
+          ref: ${{ env.HCU_JAX_DAS_BRANCH }}
+          path: jax-das
+          persist-credentials: false
+
+      - name: Stage the HCU JAX CI script into jax-das
+        run: |
+          cp xla-das/build_tools/hcu/run_jax_ci.sh jax-das/ci/
+
+      - name: Build JAX [single_gpu]
+        timeout-minutes: 240
+        working-directory: jax-das
+        env:
+          JAXCI_XLA_GIT_DIR: ${{ github.workspace }}/xla-das
+          JAXCI_HERMETIC_PYTHON_VERSION: ${{ vars.HCU_PYTHON_VERSION || '3.12' }}
+        run: |
+          source /opt/dtk/env.sh
+          bash ci/run_jax_ci.sh \
+            --build \
+            --single_gpu \
+            --//jax:build_jaxlib=wheel \
+            --//jax:build_jax=true \
+            --action_env=JAX_ENABLE_X64=1
+
+  test:
+    name: Run JAX Full Test
+    needs: build
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    runs-on: hygon-bw1100-8card
+    timeout-minutes: 240
+    env:
+      DTK_VERSION: ${{ vars.HCU_DTK_VERSION || '26.10' }}
+      RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
+    container:
+      image: ${{ vars.HCU_IMAGE_REGISTRY }}/hcu/base/dtk:${{ vars.HCU_DTK_VERSION || '26.10' }}-rockylinux8.6-py3.12
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checking out xla-das
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: xla-das
+          persist-credentials: false
+
+      - name: Install HCU LLVM, bazelisk and node
+        working-directory: xla-das
+        run: bash build_tools/hcu/setup_hcu_ci_env.sh
+
+      - name: Device info
+        run: |
+          lscpu
+          source /opt/dtk/env.sh
+          "${ROCM_PATH:-/opt/dtk}/bin/rocminfo"
+
+
+      - name: Checkout jax-das
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ vars.HCU_JAX_DAS_REPO || 'HYGON-AI/jax-das' }}
+          ref: ${{ env.HCU_JAX_DAS_BRANCH }}
+          path: jax-das
+          persist-credentials: false
+
+      - name: Stage the HCU JAX CI script into jax-das
+        run: |
+          cp xla-das/build_tools/hcu/run_jax_ci.sh jax-das/ci/
+
+      - name: Test JAX [single_gpu]
+        working-directory: jax-das
+        env:
+          JAXCI_XLA_GIT_DIR: ${{ github.workspace }}/xla-das
+          JAXCI_HERMETIC_PYTHON_VERSION: ${{ vars.HCU_PYTHON_VERSION || '3.12' }}
+        run: |
+          source /opt/dtk/env.sh
+          bash ci/run_jax_ci.sh \
+            --test \
+            --single_gpu \
+            --//jax:build_jaxlib=wheel \
+            --//jax:build_jax=true \
+            --action_env=JAX_ENABLE_X64=1
+
+      - name: Upload JAX test artifacts
+        if: !cancelled()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hcu-jax-ci-artifacts-${{ github.run_id }}
+          path: jax-das/ci-artifacts/
+          retention-days: 7

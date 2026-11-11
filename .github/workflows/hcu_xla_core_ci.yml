@@ -1,0 +1,123 @@
+# Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+# SPDX-License-Identifier: Apache-2.0
+
+# Organization variables consumed below:
+#   RESOURCE_SERVER_URL             server resources url
+#
+# Repositories variables consumed below:
+#   HCU_IMAGE_REGISTRY              registry serving the HCU DTK image, "<registry>"
+#   HCU_DTK_VERSION                 optional, default set to 26.10. Selects the DTK image tag.
+
+name: HCU XLA Core CI
+permissions:
+  contents: read
+on:
+  pull_request_target:
+    branches:
+      - main
+      - dev
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "xla/**"
+      - "third_party/gpus/**"
+      - "third_party/llvm/**"
+      - "third_party/triton/**"
+      - "build_tools/hcu/**"
+      - "BUILD.bazel"
+      - "MODULE.bazel"
+      - "WORKSPACE"
+      - ".bazelrc"
+      - ".github/workflows/hcu_xla_core_ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  manual_approval:
+    name: Manual Approval for Core CI
+    runs-on: ubuntu-latest
+    environment: ci-protection
+    if: ${{ github.event_name == 'pull_request_target' }}
+    steps:
+      - run: echo "Waiting for approval..."
+
+  build:
+    name: Build XLA
+    needs: [manual_approval]
+    if: ${{ !cancelled() && (needs.manual_approval.result == 'success' || needs.manual_approval.result == 'skipped') }}
+    runs-on: hygon-build
+    timeout-minutes: 90
+    env:
+      DTK_VERSION: ${{ vars.HCU_DTK_VERSION || '26.10' }}
+      RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
+    container:
+      image: ${{ vars.HCU_IMAGE_REGISTRY }}/hcu/base/dtk:${{ vars.HCU_DTK_VERSION || '26.10' }}-rockylinux8.6-py3.12
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checking out xla-das
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/head', github.event.pull_request.number) || github.sha }}
+          path: xla-das
+          persist-credentials: false
+
+      - name: Install HCU LLVM, bazelisk and node
+        working-directory: xla-das
+        run: bash build_tools/hcu/setup_hcu_ci_env.sh
+
+      - name: Build XLA core test binaries
+        working-directory: xla-das
+        run: |
+          source /opt/dtk/env.sh
+          bash build_tools/hcu/run_xla_core_ci.sh --build
+
+  test:
+    name: Run XLA Core Test
+    needs: [build, manual_approval]
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.manual_approval.result == 'success' || needs.manual_approval.result == 'skipped') }}
+    runs-on: hygon-bw1100-4card
+    timeout-minutes: 60
+    env:
+      DTK_VERSION: ${{ vars.HCU_DTK_VERSION || '26.10' }}
+      RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
+    container:
+      image: ${{ vars.HCU_IMAGE_REGISTRY }}/hcu/base/dtk:${{ vars.HCU_DTK_VERSION || '26.10' }}-rockylinux8.6-py3.12
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checking out xla-das
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/head', github.event.pull_request.number) || github.sha }}
+          path: xla-das
+          persist-credentials: false
+
+      - name: Install HCU LLVM, bazelisk and node
+        working-directory: xla-das
+        run: bash build_tools/hcu/setup_hcu_ci_env.sh
+
+      - name: Device info
+        run: |
+          lscpu
+          source /opt/dtk/env.sh
+          "${ROCM_PATH:-/opt/dtk}/bin/rocminfo"
+
+      - name: Test XLA [core subset]
+        working-directory: xla-das
+        run: |
+          source /opt/dtk/env.sh
+          bash build_tools/hcu/run_xla_core_ci.sh --test
+
+      - name: Upload XLA test artifacts
+        if: !cancelled()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hcu-xla-core-ci-artifacts-${{ github.run_id }}
+          path: xla-das/ci-artifacts/
+          retention-days: 7

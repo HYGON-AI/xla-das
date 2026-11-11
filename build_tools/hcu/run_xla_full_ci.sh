@@ -3,13 +3,18 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Usage:
-#   build_tools/hcu/run_xla_ci_build.sh --config=hcu --config=ci_single_gpu [extra bazel flags...]
-#   build_tools/hcu/run_xla_ci_build.sh --config=hcu --config=ci_multi_gpu  [extra bazel flags...]
+#   build_tools/hcu/run_xla_full_ci.sh --config=hcu --config=ci_single_gpu [extra bazel flags...]
+#   build_tools/hcu/run_xla_full_ci.sh --config=hcu --config=ci_multi_gpu  [extra bazel flags...]
+#
+# Build/test split (both modes share the Bazel cache below):
+#   --build   Build the test binaries only (--build_tests_only), run nothing.
+#   --test    Build what is missing and run the tests. This is the default.
 #
 # Environment overrides:
-#   DTK_DIR     DTK installation. Defaults to /opt/dtk.
-#   AILLVM_DIR  HCU LLVM installation. Defaults to ${DTK_DIR}/aillvm.
-#   PROFILE_DIR Bazel profile output. Defaults to <workspace>/ci_artifacts.
+#   DTK_DIR           DTK installation. Defaults to /opt/dtk.
+#   AILLVM_DIR        HCU LLVM installation. Defaults to ${DTK_DIR}/aillvm.
+#   ARTIFACTS_DIR     Run artifact logs. Defaults to <workspace>/ci-artifacts.
+#   MAX_JOBS          Bazel --jobs number.
 
 set -ex
 
@@ -102,8 +107,15 @@ TAG_FILTERS=$(bash "${SCRIPT_DIR}/hcu_tag_filters.sh")
 
 TARGET_SET_ARGS=()
 PASSTHROUGH_ARGS=()
+BUILD_ONLY=0
 for arg in "$@"; do
     case "$arg" in
+        --build)
+            BUILD_ONLY=1
+            ;;
+        --test)
+            BUILD_ONLY=0
+            ;;
         --config=ci_multi_gpu)
             TAG_FILTERS="${TAG_FILTERS},multi_gpu"
             PASSTHROUGH_ARGS+=("$arg")
@@ -121,13 +133,43 @@ for arg in "$@"; do
     esac
 done
 
+COMMAND_ARGS=(test --config=hcu_test)
+TARGET_PATTERN_ARGS=()
+MODE_ARGS=()
+if ((BUILD_ONLY)); then
+    COMMAND_ARGS=(build)
+    MODE_ARGS=(--build_tests_only)
+    if ((${#TARGET_SET_ARGS[@]})); then
+        TARGET_PATTERN_ARGS=(//xla/...)
+    fi
+    TARGET_SET_ARGS=()
+fi
+
+DISK_CACHE_DIR="/ci_public/${GITHUB_REPOSITORY#*/}/runs/xla-bazel-cache"
+CACHE_ARGS=()
+if mkdir -p "${DISK_CACHE_DIR}/repository" 2>/dev/null; then
+    CACHE_ARGS+=(
+        --disk_cache="${DISK_CACHE_DIR}"
+        --repository_cache="${DISK_CACHE_DIR}/repository"
+    )
+else
+    echo "WARNING: ${DISK_CACHE_DIR} is not writable, running without the bazel cache." >&2
+fi
+
+JOBS_ARGS=()
+if [[ -n "${MAX_JOBS:-}" ]]; then
+    JOBS_ARGS+=(--jobs="${MAX_JOBS}")
+fi
+
 TEST_FILTER_ARG=()
 if ((${#EXCLUDED_TESTS[@]})); then
     TEST_FILTER_ARG=(--test_filter="-$(IFS=:; echo "${EXCLUDED_TESTS[*]}")")
 fi
 
-PROFILE_DIR="${PROFILE_DIR:-${WORKSPACE_DIR}/ci_artifacts}"
-mkdir -p "${PROFILE_DIR}"
+ARTIFACTS_DIR="${ARTIFACTS_DIR:-${WORKSPACE_DIR}/ci-artifacts}"
+PROFLOG_DIR="${ARTIFACTS_DIR}/proflogs"
+TESTLOG_DIR="${ARTIFACTS_DIR}/testlogs"
+mkdir -p "${PROFLOG_DIR}"
 
 cd "${WORKSPACE_DIR}"
 
@@ -140,17 +182,46 @@ if [[ -n "${HIPBLASLT_TENSILE_LIBPATH:-}" ]]; then
     HIPBLASLT_TEST_ENV_ARGS+=("--test_env=HIPBLASLT_TENSILE_LIBPATH=${HIPBLASLT_TENSILE_LIBPATH}")
 fi
 
-bazel --bazelrc="${SCRIPT_DIR}/hcu_xla.bazelrc" test \
-    --config=hcu_test \
+# Keep the console output of this run and the logs of the tests that failed, so
+# the CI artifacts explain a red build without re-running anything.
+BAZEL_LOG="${ARTIFACTS_DIR}/bazel-$(date +%Y%m%d-%H%M%S).log"
+
+collect_failed_test_logs() {
+    local log="$1"
+    local dest="$2"
+    local target rel
+    [[ -f "${log}" && -d bazel-testlogs ]] || return 0
+    {
+        # "FAIL: //pkg:target (see ...test.log)" and "//pkg:target FAILED in 3 out of 3"
+        sed -e 's/\x1b\[[0-9;]*m//g' "${log}" \
+            | grep -oE '^(FAIL|TIMEOUT|FLAKY|INCOMPLETE): //[^ ]+' | sed -e 's/^[A-Z]*: //'
+        sed -e 's/\x1b\[[0-9;]*m//g' "${log}" \
+            | awk '/^\/\// && /(FAILED|TIMEOUT|FLAKY|INCOMPLETE|NO STATUS)/ {print $1}'
+    } | sed -e 's/(.*//' | sort -u | while read -r target; do
+        rel="${target#//}"
+        rel="${rel/:/\/}"
+        if [[ -n "${target}" && "${target}" == //* && -e "bazel-testlogs/${rel}" ]]; then
+            mkdir -p "${dest}/${rel}"
+            cp -a "bazel-testlogs/${rel}/." "${dest}/${rel}/" 2>/dev/null || true
+            echo "collected test log: ${dest}/${rel}"
+        fi
+    done
+}
+
+set +e
+bazel --bazelrc="${SCRIPT_DIR}/hcu_xla.bazelrc" "${COMMAND_ARGS[@]}" \
     --build_tag_filters="${TAG_FILTERS}" \
     --test_tag_filters="${TAG_FILTERS}" \
-    --profile="${PROFILE_DIR}/profile.json.gz" \
+    --profile="${PROFLOG_DIR}/profile.json.gz" \
     --spawn_strategy=local \
     --strategy=TestRunner=local \
     --nokeep_going \
     --cache_test_results=yes \
     --curses=no \
     --color=yes \
+    "${MODE_ARGS[@]}" \
+    "${CACHE_ARGS[@]}" \
+    "${JOBS_ARGS[@]}" \
     "${TEST_FILTER_ARG[@]}" \
     "${HIPBLASLT_TEST_ENV_ARGS[@]}" \
     "${PASSTHROUGH_ARGS[@]}" \
@@ -158,4 +229,11 @@ bazel --bazelrc="${SCRIPT_DIR}/hcu_xla.bazelrc" test \
     --action_env=ROCM_PATH="${DTK_DIR}" \
     --action_env=TF_ROCM_CLANG=1 \
     --action_env=CLANG_COMPILER_PATH="${HCU_CLANG}" \
-    "${TARGET_SET_ARGS[@]}"
+    "${TARGET_SET_ARGS[@]}" \
+    "${TARGET_PATTERN_ARGS[@]}" 2>&1 | tee "${BAZEL_LOG}"
+BAZEL_RETVAL=${PIPESTATUS[0]}
+set -e
+
+collect_failed_test_logs "${BAZEL_LOG}" "${TESTLOG_DIR}"
+
+exit "${BAZEL_RETVAL}"

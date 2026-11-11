@@ -6,7 +6,7 @@ set -ex
 
 SCRIPT_DIR=$(realpath "$(dirname "$0")")
 WORKSPACE_DIR=$(realpath "${SCRIPT_DIR}/../..")
-CI_BUILD_SCRIPT="${SCRIPT_DIR}/run_xla_ci_build.sh"
+CI_BUILD_SCRIPT="${SCRIPT_DIR}/run_xla_full_ci.sh"
 
 # ---------------------------------------------------------------------------
 # Tier 1 -- GPU compiler / HLO pass tests.
@@ -163,13 +163,11 @@ CORE_TARGETS=(
     "${TIER_PJRT[@]}"
 )
 
-PROFILE_DIR="${PROFILE_DIR:-${WORKSPACE_DIR}/ci_artifacts}"
-mkdir -p "${PROFILE_DIR}"
 
 bash "${CI_BUILD_SCRIPT}" \
     --config=hcu \
     --config=ci_single_gpu \
-    --local_test_jobs=8 \
+    --local_test_jobs=4 \
     --test_output=errors \
     --test_summary=detailed \
     --test_timeout=600,1800,3600,7200 \
