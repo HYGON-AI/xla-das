@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/match.h"
@@ -864,7 +865,7 @@ absl::Status AMDGPUTargetModuleLinker(llvm::Module* module,
     return xla::Internal("Incompatible compute capability was specified.");
   }
 
-  RETURN_IF_ERROR(amdgpu::LinkROCDLIfNecessary(
+  ABSL_RETURN_IF_ERROR(amdgpu::LinkROCDLIfNecessary(
       module, compute_capability->gfx_version(), debug_options));
 
   // If ftz is enabled, set it as an attribute on every function in the module.
@@ -967,7 +968,7 @@ absl::StatusOr<amdgpu::HsacoResult> CompileToHsacoInternal(
                                          debug_options, feature_str);
 
   // Link with ROCm-Device-Libs, and optimize the LLVM module.
-  RETURN_IF_ERROR(gpu::LinkAndOptimizeModule(
+  ABSL_RETURN_IF_ERROR(gpu::LinkAndOptimizeModule(
       module, gpu_version, debug_options, {}, AMDGPUTargetModuleLinker,
       default_target_triple, target_machine.get(), kAMDGPUInlineThreshold));
 

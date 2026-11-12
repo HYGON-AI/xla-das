@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -27,14 +28,59 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/attributes.h"
-#include "absl/base/dynamic_annotations.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/types/span.h"
+#include "xla/types.h"
 
 namespace xla::cpu::internal {
 
 namespace {
+
+template <typename T>
+inline constexpr bool is_float_type_v =
+    std::is_floating_point_v<T> || std::is_same_v<T, bfloat16> ||
+    std::is_same_v<T, half>;
+
+template <typename T>
+inline bool IsNaN(const T& val) {
+  if constexpr (std::is_same_v<T, double>) {
+    return std::isnan(val);
+  } else if constexpr (std::is_same_v<T, float> ||
+                       std::is_same_v<T, bfloat16> || std::is_same_v<T, half>) {
+    return std::isnan(static_cast<float>(val));
+  } else {
+    return false;
+  }
+}
+
+template <typename T>
+struct SortComparatorLess {
+  bool operator()(const T& a, const T& b) const {
+    if constexpr (is_float_type_v<T>) {
+      bool a_nan = IsNaN(a);
+      bool b_nan = IsNaN(b);
+      if (a_nan || b_nan) {
+        return !a_nan && b_nan;
+      }
+    }
+    return a < b;
+  }
+};
+
+template <typename T>
+struct SortComparatorGreater {
+  bool operator()(const T& a, const T& b) const {
+    if constexpr (is_float_type_v<T>) {
+      bool a_nan = IsNaN(a);
+      bool b_nan = IsNaN(b);
+      if (a_nan || b_nan) {
+        return a_nan && !b_nan;
+      }
+    }
+    return a > b;
+  }
+};
 
 // We use a lot of template metaprogramming below to be able to construct
 // iterators with statically known number of compared elements. We support a
@@ -558,20 +604,17 @@ static void DSort1DInplace(const SortDims& sort_dims, int64_t offset,
   }
 }
 
-// Sorts `data` using `less_than` comparator function.
-void SortInplace(const SortDims& sort_dims, absl::Span<std::byte* const> data,
+// Sorts `data` using `less_than` comparator function for slices in
+// [start_slice, end_slice).
+void SortInplace(const SortDims& sort_dims, int64_t start_slice,
+                 int64_t end_slice, absl::Span<std::byte* const> data,
                  absl::Span<const size_t> primitive_sizes, bool is_stable,
                  LessThan* less_than) {
-  // Iterate over all the 1-dimensional slices of the buffers and sort them.
-  int64_t num_iterations = sort_dims.outer_dim_size * sort_dims.inner_dim_size;
+  DCHECK_LE(0, start_slice);
+  DCHECK_LE(start_slice, end_slice);
+  DCHECK_LE(end_slice, sort_dims.outer_dim_size * sort_dims.inner_dim_size);
 
-  // Annotate memory that might have been initialized by jit-compiled code.
-  for (int64_t i = 0; i < data.size(); ++i) {
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
-        data[i], primitive_sizes[i] * sort_dims.sort_dim_size * num_iterations);
-  }
-
-  for (int64_t i = 0; i < num_iterations; ++i) {
+  for (int64_t i = start_slice; i < end_slice; ++i) {
     int64_t inner_idx = i % sort_dims.inner_dim_size;
     int64_t offset = inner_idx + (i - inner_idx) * sort_dims.sort_dim_size;
 
@@ -642,19 +685,35 @@ void SortInplace(const SortDims& sort_dims, absl::Span<std::byte* const> data,
 template <class Iterator, class T>
 static void Sort1DInplace(Iterator begin, Iterator end, bool is_stable,
                           SortDirection direction) {
-  if (direction == SortDirection::kAscending) {
-    if (is_stable) {
-      std::stable_sort(begin, end, std::less<T>());
+  if constexpr (std::is_integral_v<T>) {
+    if (direction == SortDirection::kAscending) {
+      if (is_stable) {
+        std::stable_sort(begin, end, std::less<T>());
+      } else {
+        std::sort(begin, end, std::less<T>());
+      }
     } else {
-      std::sort(begin, end, std::less<T>());
+      if (is_stable) {
+        std::stable_sort(begin, end, std::greater<T>());
+      } else {
+        std::sort(begin, end, std::greater<T>());
+      }
     }
   } else {
-    if (is_stable) {
-      std::stable_sort(begin, end, std::greater<T>());
+    if (direction == SortDirection::kAscending) {
+      if (is_stable) {
+        std::stable_sort(begin, end, SortComparatorLess<T>());
+      } else {
+        std::sort(begin, end, SortComparatorLess<T>());
+      }
     } else {
-      std::sort(begin, end, std::greater<T>());
+      if (is_stable) {
+        std::stable_sort(begin, end, SortComparatorGreater<T>());
+      } else {
+        std::sort(begin, end, SortComparatorGreater<T>());
+      }
     }
-  };
+  }
 }
 
 template <typename T>
@@ -674,16 +733,14 @@ static void Sort1DInplace(const SortDims& sort_dims, int64_t offset, T* data,
 }
 
 template <typename T>
-void SortInplace(const SortDims& sort_dims, T* data, bool is_stable,
+void SortInplace(const SortDims& sort_dims, int64_t start_slice,
+                 int64_t end_slice, T* data, bool is_stable,
                  SortDirection direction) {
-  // Iterate over all the 1-dimensional slices of the buffers and sort them.
-  int64_t num_iterations = sort_dims.outer_dim_size * sort_dims.inner_dim_size;
+  DCHECK_LE(0, start_slice);
+  DCHECK_LE(start_slice, end_slice);
+  DCHECK_LE(end_slice, sort_dims.outer_dim_size * sort_dims.inner_dim_size);
 
-  // Annotate memory that might have been initialized by jit-compiled code.
-  ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
-      data, sizeof(T) * sort_dims.sort_dim_size * num_iterations);
-
-  for (int64_t i = 0; i < num_iterations; ++i) {
+  for (int64_t i = start_slice; i < end_slice; ++i) {
     int64_t inner_idx = i % sort_dims.inner_dim_size;
     int64_t offset = inner_idx + (i - inner_idx) * sort_dims.sort_dim_size;
 
@@ -691,13 +748,16 @@ void SortInplace(const SortDims& sort_dims, T* data, bool is_stable,
   }
 }
 
-// Declare Sort1DInplace for all supported types. Template is instantiated in
+// Declare SortInplace for all supported types. Template is instantiated in
 // the .cc file.
-#define DEFINE_SORT_INPLACE(T) \
-  template void SortInplace<T>(const SortDims&, T*, bool, SortDirection)
+#define DEFINE_SORT_INPLACE(T)                                              \
+  template void SortInplace<T>(const SortDims&, int64_t, int64_t, T*, bool, \
+                               SortDirection)
 
 DEFINE_SORT_INPLACE(float);
 DEFINE_SORT_INPLACE(double);
+DEFINE_SORT_INPLACE(bfloat16);
+DEFINE_SORT_INPLACE(half);
 DEFINE_SORT_INPLACE(int8_t);
 DEFINE_SORT_INPLACE(int16_t);
 DEFINE_SORT_INPLACE(int32_t);
