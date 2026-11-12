@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Modified by Hygon Information Technology Co., Ltd., 2026.
 """Crosstool wrapper for compiling ROCm programs.
 
 SYNOPSIS:
@@ -24,7 +25,7 @@ import shlex
 
 # Template values set by rocm_configure.bzl or environment
 AMDGPU_TARGETS = ('%{rocm_amdgpu_targets}')
-CPU_COMPILER = os.environ.get('HOST_COMPILER', '/usr/bin/clang')
+CPU_COMPILER = os.environ.get('HOST_COMPILER', '/opt/dtk/aillvm/bin/clang')
 
 HIPCC_PATH = '%{rocm_root}/bin/hipcc'
 HIPCC_ENV = '%{hipcc_env}'
@@ -107,14 +108,21 @@ def GetHipccOptions(argv):
   """
 
   parser = ArgumentParser()
+  parser.add_argument('--offload-arch', nargs='*', action='append')
   # TODO find a better place for this
   parser.add_argument('-gline-tables-only', action='store_true')
 
   args, _ = parser.parse_known_args(argv)
 
   hipcc_opts = ' -gline-tables-only ' if args.gline_tables_only else ''
-  for target in AMDGPU_TARGETS.split(','):
-    hipcc_opts += ' --offload-arch=' + target.strip()
+  if args.offload_arch:
+    hipcc_opts += ' ' + ' '.join(
+        '--offload-arch=' + target
+        for target in sum(args.offload_arch, [])
+    )
+  elif AMDGPU_TARGETS:
+    for target in AMDGPU_TARGETS.split(','):
+      hipcc_opts += ' --offload-arch=' + target.strip()
 
   return hipcc_opts
 

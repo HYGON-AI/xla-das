@@ -120,6 +120,19 @@ class RocmComputeCapability {
   static constexpr absl::string_view kHcuGfx9Series[] = {
       "gfx926", "gfx928", "gfx936", "gfx938", "gfx92a"};
 
+  // HCU VGPR classes for gfx9: 768 entries (gfx936/938) versus 512 (gfx926/928/92a/946).
+  static constexpr absl::string_view kHcuGfx9Vgpr768[] = {"gfx936", "gfx938"};
+  static constexpr absl::string_view kHcuGfx9Vgpr512[] = {"gfx926", "gfx928",
+                                                         "gfx92a", "gfx946"};
+
+  bool hcu_768_vgpr() const {
+    return IsThisGfxInAnyList(kHcuGfx9Vgpr768);
+  }
+
+  bool hcu_512_vgpr() const {
+    return IsThisGfxInAnyList(kHcuGfx9Vgpr512);
+  }
+
   bool gfx9_mi200() const { return gfx_version() == "gfx90a"; }
 
   static constexpr absl::string_view kMI200Series[] = {"gfx90a"};

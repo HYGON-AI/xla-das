@@ -431,6 +431,7 @@ def _setup_rocm_distro_dir(repository_ctx):
 
         # Symlink the ROCM_PATH to rocm_dist
         repository_ctx.symlink(rocm_path, _DISTRIBUTION_PATH)
+        _link_runtime_rocm_smi(repository_ctx, rocm_path)
         return _get_rocm_config(repository_ctx, bash_bin, _DISTRIBUTION_PATH, rocm_path)
 
     # Check for multiple paths support (second priority)

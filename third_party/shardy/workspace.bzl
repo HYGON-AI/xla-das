@@ -14,5 +14,5 @@ def repo():
         sha256 = SHARDY_SHA256,
         strip_prefix = "shardy-{commit}".format(commit = SHARDY_COMMIT),
         urls = tf_mirror_urls("https://github.com/openxla/shardy/archive/{commit}.zip".format(commit = SHARDY_COMMIT)),
-        patch_file = [],
+        patch_file = ["//third_party/shardy:temporary.patch"],
     )
