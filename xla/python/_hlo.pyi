@@ -47,6 +47,10 @@ class PrimitiveType(enum.IntEnum):
 
   F4E2M1FN = 32
 
+  F6E2M3FN = 36
+
+  F6E3M2FN = 35
+
   F8E3M4 = 29
 
   F8E4M3 = 28
@@ -377,9 +381,7 @@ class Shape:
       dims: Sequence[int],
       layout: Sequence[int] | None = ...,
       dynamic_dimensions: Sequence[bool] | None = ...,
-  ) -> Shape:
-    """Constructs an array shape."""
-
+  ) -> Shape: ...
   @overload
   @staticmethod
   def array_shape(
@@ -387,17 +389,19 @@ class Shape:
       dims: Sequence[int],
       layout: Sequence[int] | None = ...,
       dynamic_dimensions: Sequence[bool] | None = ...,
-  ) -> Shape: ...
+  ) -> Shape:
+    """Constructs an array shape."""
+
   @staticmethod
   def token_shape() -> Shape: ...
   @overload
   @staticmethod
-  def scalar_shape(type: PrimitiveType) -> Shape:
-    """Constructs a scalar shape."""
-
+  def scalar_shape(type: PrimitiveType) -> Shape: ...
   @overload
   @staticmethod
-  def scalar_shape(type: numpy.dtype) -> Shape: ...
+  def scalar_shape(type: numpy.dtype) -> Shape:
+    """Constructs a scalar shape."""
+
   def dimensions(self) -> tuple[int, ...]: ...
   def layout(self) -> Layout: ...
   def xla_element_type(self) -> PrimitiveType: ...
@@ -533,6 +537,10 @@ class HloInstruction:
   def users(self) -> list[HloInstruction]: ...
   def operands(self) -> list[HloInstruction]: ...
   def async_wrapped_root(self) -> HloInstruction: ...
+  def get_frontend_attribute(self, key: str) -> str | None: ...
+  def set_frontend_attribute(self, key: str, value: str) -> None: ...
+  def set_core_assignment(self, core_ids: Sequence[int]) -> None: ...
+  def core_assignment(self) -> list[int]: ...
   def __hash__(self) -> int: ...
   def __eq__(self, arg: HloInstruction, /) -> bool: ...
 

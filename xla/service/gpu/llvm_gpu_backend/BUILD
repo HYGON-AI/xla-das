@@ -1,3 +1,5 @@
+# Modified by Hygon Information Technology Co., Ltd., 2026.
+
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@xla//third_party/rules_python/python:py_binary.bzl", "py_binary")
 load("//xla:xla.default.bzl", "xla_cc_test")
@@ -173,6 +175,7 @@ cc_library(
         "HAS_SUPPORT_FOR_LLD_AS_A_LIBRARY=1",
         "HAS_SUPPORT_FOR_EMBEDDED_LIB_DEVICE=1",
     ]),
+
     tags = [
         "gpu",
         "nofixdeps",  # This target crashes build_cleaner ¯\_(ツ)_/¯
@@ -313,7 +316,6 @@ xla_cc_test(
         ":amdgpu_backend",
         ":load_ir_module",
         "//xla:debug_options_flags",
-        "//xla/tsl/platform:rocm_rocdl_path",
         "//xla/tsl/platform:test",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:ir_headers",
@@ -415,6 +417,7 @@ cc_library(
         "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:CodeGen",
         "@llvm-project//llvm:Scalar",
@@ -441,7 +444,17 @@ xla_cc_test(
     ]),
     deps = [
         ":spirv_backend",
+        "//xla:xla_proto_cc",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/sycl:oneapi_compute_capability",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
+        "@llvm-project//llvm:AsmParser",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
     ],
 )

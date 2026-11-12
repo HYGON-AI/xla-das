@@ -15,11 +15,11 @@ limitations under the License.
 #include <cstdint>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/stream_executor/rocm/smi_util.h"
 #include "xla/tsl/platform/logging.h"
 
@@ -54,11 +54,11 @@ constexpr int64_t ComputePcieBandwidthFromSpeedAndWidth(
 absl::StatusOr<int64_t> GetRocmPcieBandwidth(absl::string_view pci_bus_id) {
   absl::MutexLock lock(smi_mutex);
 
-  RETURN_IF_ERROR(InitSmi());
+  ABSL_RETURN_IF_ERROR(InitSmi());
 
-  ASSIGN_OR_RETURN(BdfComponents bdf, ParseBdf(pci_bus_id));
-  ASSIGN_OR_RETURN(SmiDeviceHandle device, FindDevice(bdf));
-  ASSIGN_OR_RETURN(PcieLinkStatus link, QueryPcieLinkStatus(device));
+  ABSL_ASSIGN_OR_RETURN(BdfComponents bdf, ParseBdf(pci_bus_id));
+  ABSL_ASSIGN_OR_RETURN(SmiDeviceHandle device, FindDevice(bdf));
+  ABSL_ASSIGN_OR_RETURN(PcieLinkStatus link, QueryPcieLinkStatus(device));
 
   uint32_t speed_mt_per_sec = link.speed_mt_per_sec;
   uint16_t width = link.width;

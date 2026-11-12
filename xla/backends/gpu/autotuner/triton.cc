@@ -68,6 +68,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "triton/Version.h"
 
 namespace xla {
 namespace gpu {
@@ -407,6 +408,8 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
   return backend_config.kind() == kCuDnnFusionKind ||
          backend_config.kind() == kCustomFusionKind;
 }
+
+std::string TritonBackend::version() const { return TRITON_VERSION; }
 
 }  // namespace gpu
 }  // namespace xla

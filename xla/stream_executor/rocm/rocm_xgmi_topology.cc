@@ -16,10 +16,10 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/stream_executor/rocm/smi_util.h"
 #include "xla/tsl/platform/logging.h"
 
@@ -29,10 +29,10 @@ absl::StatusOr<XgmiTopologyInfo> GetRocmXgmiTopology(
     absl::string_view pci_bus_id) {
   absl::MutexLock lock(smi_mutex);
 
-  RETURN_IF_ERROR(InitSmi());
+  ABSL_RETURN_IF_ERROR(InitSmi());
 
-  ASSIGN_OR_RETURN(BdfComponents bdf, ParseBdf(pci_bus_id));
-  ASSIGN_OR_RETURN(SmiDeviceHandle device, FindDevice(bdf));
+  ABSL_ASSIGN_OR_RETURN(BdfComponents bdf, ParseBdf(pci_bus_id));
+  ABSL_ASSIGN_OR_RETURN(SmiDeviceHandle device, FindDevice(bdf));
 
   XgmiTopologyInfo info;
 
@@ -49,7 +49,8 @@ absl::StatusOr<XgmiTopologyInfo> GetRocmXgmiTopology(
 
   // Count peers reachable over xGMI by querying the link type to every other
   // device. This counts peer GPUs, not physical links.
-  ASSIGN_OR_RETURN(std::vector<SmiDeviceHandle> devices, EnumerateDevices());
+  ABSL_ASSIGN_OR_RETURN(std::vector<SmiDeviceHandle> devices,
+                        EnumerateDevices());
   if (devices.size() <= 1) return info;
 
   int xgmi_links = 0;

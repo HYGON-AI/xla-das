@@ -677,8 +677,8 @@ absl::StatusOr<std::unique_ptr<Kernel>> RocmExecutor::LoadKernel(
   const std::string& kernel_name = spec.kernel_name();
 
   if (spec.has_cuda_cubin_in_memory()) {
-    const auto& cubin = spec.cuda_cubin_in_memory()->cubin_bytes;
-    const char* hsaco = reinterpret_cast<const char*>(cubin.data());
+    const char* hsaco = reinterpret_cast<const char*>(
+        spec.cuda_cubin_in_memory()->cubin_bytes.data());
     absl::MutexLock lock{in_memory_modules_mu_};
     ASSIGN_OR_RETURN(ModuleHandle module_handle, LoadModuleFromHsaco(hsaco));
     hipModule_t module = gpu_binary_to_module_.at(module_handle).first;
@@ -694,7 +694,6 @@ absl::StatusOr<std::unique_ptr<Kernel>> RocmExecutor::LoadKernel(
 
     VLOG(1) << "Resolve ROCM kernel " << kernel_name
             << " from symbol pointer: " << symbol;
-
     ScopedActivateContext activation(&rocm_context_);
     hipFunction_t func;
     RETURN_IF_ERROR(
@@ -1160,6 +1159,10 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
     desc.set_l2_cache_size(prop.l2CacheSize);
   }
 
+#if XLA_ROCM_ENABLE_HCU
+  // Use the same default XLA falls back to when HCU rocm_smi cannot report PCIe bandwidth.
+  desc.set_pcie_bandwidth(32LL * 1024 * 1024 * 1024);
+#else
   {
     absl::StatusOr<int64_t> pcie_bw = gpu::GetRocmPcieBandwidth(pci_bus_id);
     if (pcie_bw.ok()) {
@@ -1172,6 +1175,7 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
       desc.set_pcie_bandwidth(32LL * 1024 * 1024 * 1024);
     }
   }
+#endif  // XLA_ROCM_ENABLE_HCU
 
   {
     absl::StatusOr<gpu::XgmiTopologyInfo> xgmi =

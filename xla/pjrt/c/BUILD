@@ -1,3 +1,6 @@
+# Modified by Hygon Information Technology Co., Ltd., 2026.
+
+load("@bazel_skylib//lib:selects.bzl", "selects")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
@@ -27,6 +30,24 @@ load(
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = internal_visibility(["//xla:internal"]),
+)
+
+config_setting(
+    name = "hcu_enabled_true",
+    define_values = {"HCU_ENABLED": "true"},
+)
+
+config_setting(
+    name = "hcu_enabled_1",
+    define_values = {"HCU_ENABLED": "1"},
+)
+
+selects.config_setting_group(
+    name = "use_hcu",
+    match_any = [
+        ":hcu_enabled_true",
+        ":hcu_enabled_1",
+    ],
 )
 
 cc_library(
@@ -64,7 +85,7 @@ cc_library(
 cc_library(
     name = "pjrt_c_api_callback_extension_hdrs",
     hdrs = ["pjrt_c_api_callback_extension.h"],
-    deps = ["//xla/pjrt/c:pjrt_c_api_hdrs"],
+    deps = [":pjrt_c_api_hdrs"],
 )
 
 cc_library(
@@ -144,6 +165,10 @@ cc_library(
     srcs = ["pjrt_c_api_collectives_internal.cc"],
     hdrs = ["pjrt_c_api_collectives_internal.h"],
     deps = [
+        ":pjrt_c_api_collectives_extension_hdrs",
+        ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_helpers",
+        ":pjrt_c_api_wrapper_impl",
         "//xla:executable_run_options",
         "//xla/backends/cpu/collectives:cpu_clique_key",
         "//xla/backends/cpu/collectives:cpu_collectives",
@@ -152,10 +177,6 @@ cc_library(
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/core/collectives:reduction_kind",
-        "//xla/pjrt/c:pjrt_c_api_collectives_extension_hdrs",
-        "//xla/pjrt/c:pjrt_c_api_hdrs",
-        "//xla/pjrt/c:pjrt_c_api_helpers",
-        "//xla/pjrt/c:pjrt_c_api_wrapper_impl",
         "//xla/runtime:device_id",
         "//xla/service:collective_ops_utils",
         "//xla/tsl/concurrency:future",
@@ -347,12 +368,14 @@ cc_library(
         ":pjrt_c_api_raw_buffer_extension_hdrs",
         ":pjrt_c_api_status_utils",
         "//xla:future",
+        "//xla/pjrt:device_event",
         "//xla/pjrt:raw_buffer",
         "//xla/pjrt/c_api_client:pjrt_c_api_client",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:casts",
@@ -659,7 +682,6 @@ cc_library(
         ":pjrt_c_api_xla_transform_internal",
         "//xla/backends/cpu:target_machine_options",
         "//xla/backends/profiler:profiler_backends",  # To register the Host Tracers for GPU Plugin.
-        "//xla/backends/profiler/gpu:device_tracer",  # To register the GPU Tracers with the GPU Plugin.
         "//xla/backends/profiler/plugin:plugin_tracer_impl",
         "//xla/backends/profiler/plugin:profiler_c_api_hdrs",
         "//xla/backends/profiler/plugin:profiler_error",
@@ -699,7 +721,12 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_protobuf//:protobuf",
-    ] + if_cuda_is_configured([
+    ] + select({
+        ":use_hcu": [],
+        "//conditions:default": [
+            "//xla/backends/profiler/gpu:device_tracer",  # To register the GPU Tracers with the GPU Plugin.
+        ],
+    }) + if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
     ]),
 )

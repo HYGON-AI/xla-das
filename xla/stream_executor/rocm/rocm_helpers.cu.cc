@@ -28,6 +28,13 @@ limitations under the License.
 #include "rocm/include/hipblaslt/hipblaslt-ext.hpp"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 
+#if XLA_ROCM_ENABLE_HCU
+#define XLA_ROCM_GLOBAL_BARRIER_FLAGS __CLK_LOCAL_MEM_FENCE
+#else
+#define XLA_ROCM_GLOBAL_BARRIER_FLAGS \
+  (__CLK_LOCAL_MEM_FENCE | __CLK_GLOBAL_MEM_FENCE)
+#endif
+
 namespace stream_executor {
 namespace gpu {
 
@@ -328,7 +335,7 @@ __launch_bounds__(BLOCK_SIZE) __global__
       arg.activationType = activation_type;
     }
 
-    __syncthreads();
+    __barrier(__CLK_LOCAL_MEM_FENCE);
 
     // Last thread updates cumulative offset for next batch
     if (threadIdx.x == batch_size - 1) {
@@ -339,7 +346,7 @@ __launch_bounds__(BLOCK_SIZE) __global__
     size_t total_bytes = batch_size * sizeof(hipblaslt_ext::UserArguments);
     copy_shared_to_global(sharedUserArgs, &dest_args[batch_start], total_bytes);
     // Synchronize before next iteration to ensure copy is complete
-    __syncthreads();
+    __barrier(XLA_ROCM_GLOBAL_BARRIER_FLAGS);
   }
 }
 
@@ -460,7 +467,7 @@ __launch_bounds__(BLOCK_SIZE) __global__
       arg.activationType = activation_type;
     }
 
-    __syncthreads();
+    __barrier(__CLK_LOCAL_MEM_FENCE);
 
     // Last thread updates cumulative offset for next batch
     if (threadIdx.x == batch_size - 1) {
@@ -471,7 +478,7 @@ __launch_bounds__(BLOCK_SIZE) __global__
     size_t total_bytes = batch_size * sizeof(hipblaslt_ext::UserArguments);
     copy_shared_to_global(sharedUserArgs, &dest_args[batch_start], total_bytes);
     // Synchronize before next iteration to ensure copy is complete
-    __syncthreads();
+    __barrier(XLA_ROCM_GLOBAL_BARRIER_FLAGS);
   }
 }
 
@@ -590,7 +597,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ void SetUserArgsKernelRaggedInBatchDim(
       arg.activationType = activation_type;
     }
 
-    __syncthreads();
+    __barrier(__CLK_LOCAL_MEM_FENCE);
 
     // Last thread updates cumulative offset for next batch
     if (threadIdx.x == batch_size - 1) {
@@ -601,7 +608,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ void SetUserArgsKernelRaggedInBatchDim(
     size_t total_bytes = batch_size * sizeof(hipblaslt_ext::UserArguments);
     copy_shared_to_global(sharedUserArgs, &dest_args[batch_start], total_bytes);
     // Synchronize before next iteration to ensure copy is complete
-    __syncthreads();
+    __barrier(XLA_ROCM_GLOBAL_BARRIER_FLAGS);
   }
 }
 

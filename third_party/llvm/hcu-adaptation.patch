@@ -1,32 +1,83 @@
+diff --git a/llvm/include/llvm/BinaryFormat/ELF.h b/llvm/include/llvm/BinaryFormat/ELF.h
+index 3f1889f..cd223e4 100644
+--- a/llvm/include/llvm/BinaryFormat/ELF.h
++++ b/llvm/include/llvm/BinaryFormat/ELF.h
+@@ -842,7 +842,15 @@ enum {
+   X(0x5e, EF_AMDGPU_MACH_AMDGCN_GFX1171, "gfx1171")                            \
+   X(0x5f, EF_AMDGPU_MACH_AMDGCN_GFX9_4_GENERIC, "gfx9-4-generic")              \
+   X(0x62, EF_AMDGPU_MACH_AMDGCN_GFX11_7_GENERIC, "gfx11-7-generic")            \
+-  X(0x63, EF_AMDGPU_MACH_AMDGCN_GFX13_GENERIC, "gfx13-generic")
++  X(0x63, EF_AMDGPU_MACH_AMDGCN_GFX13_GENERIC, "gfx13-generic")               \
++  X(0x80, EF_HCU_MACH_AMDGCN_GFX916, "gfx916")                                \
++  X(0x81, EF_HCU_MACH_AMDGCN_GFX926, "gfx926")                                \
++  X(0x82, EF_HCU_MACH_AMDGCN_GFX936, "gfx936")                                \
++  X(0x83, EF_HCU_MACH_AMDGCN_GFX928, "gfx928")                                \
++  X(0x84, EF_HCU_MACH_AMDGCN_GFX938, "gfx938")                                \
++  X(0x85, EF_HCU_MACH_AMDGCN_GFX946, "gfx946")                                \
++  X(0x86, EF_HCU_MACH_AMDGCN_GFX948, "gfx948")                                \
++  X(0x87, EF_HCU_MACH_AMDGCN_GFX92A, "gfx92a")
+ 
+ enum : unsigned {
+   // clang-format off
+@@ -877,6 +885,10 @@ enum : unsigned {
+   EF_AMDGPU_MACH_AMDGCN_FIRST = EF_AMDGPU_MACH_AMDGCN_GFX600,
+   EF_AMDGPU_MACH_AMDGCN_LAST = EF_AMDGPU_MACH_AMDGCN_GFX13_GENERIC,
+ 
++  // First/last HCU-based processors.
++  EF_HCU_MACH_AMDGCN_FIRST = EF_HCU_MACH_AMDGCN_GFX916,
++  EF_HCU_MACH_AMDGCN_LAST = EF_HCU_MACH_AMDGCN_GFX92A,
++
+   // Indicates if the "xnack" target feature is enabled for all code contained
+   // in the object.
+   //
 diff --git a/llvm/include/llvm/IR/Intrinsics.td b/llvm/include/llvm/IR/Intrinsics.td
+index 37c9c78..a9f0c3b 100644
 --- a/llvm/include/llvm/IR/Intrinsics.td
 +++ b/llvm/include/llvm/IR/Intrinsics.td
-@@ -3126,6 +3126,7 @@ include "llvm/IR/IntrinsicsHexagon.td"
- include "llvm/IR/IntrinsicsNVVM.td"
+@@ -3216,6 +3216,7 @@ include "llvm/IR/IntrinsicsNVVM.td"
  include "llvm/IR/IntrinsicsMips.td"
+ include "llvm/IR/IntrinsicsAVR.td"
  include "llvm/IR/IntrinsicsAMDGPU.td"
 +include "llvm/IR/IntrinsicsHCU.td"
  include "llvm/IR/IntrinsicsBPF.td"
  include "llvm/IR/IntrinsicsSystemZ.td"
  include "llvm/IR/IntrinsicsWebAssembly.td"
+diff --git a/llvm/include/llvm/Object/ELFObjectFile.h b/llvm/include/llvm/Object/ELFObjectFile.h
+index 6d72741..537b776 100644
+--- a/llvm/include/llvm/Object/ELFObjectFile.h
++++ b/llvm/include/llvm/Object/ELFObjectFile.h
+@@ -1422,8 +1422,10 @@ template <class ELFT> Triple::ArchType ELFObjectFile<ELFT>::getArch() const {
+     if (MACH >= ELF::EF_AMDGPU_MACH_R600_FIRST &&
+         MACH <= ELF::EF_AMDGPU_MACH_R600_LAST)
+       return Triple::r600;
+-    if (MACH >= ELF::EF_AMDGPU_MACH_AMDGCN_FIRST &&
+-        MACH <= ELF::EF_AMDGPU_MACH_AMDGCN_LAST)
++    if ((MACH >= ELF::EF_AMDGPU_MACH_AMDGCN_FIRST &&
++         MACH <= ELF::EF_AMDGPU_MACH_AMDGCN_LAST) ||
++        (MACH >= ELF::EF_HCU_MACH_AMDGCN_FIRST &&
++         MACH <= ELF::EF_HCU_MACH_AMDGCN_LAST))
+       return Triple::amdgpu;
+ 
+     return Triple::UnknownArch;
 diff --git a/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def b/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def
+index 4b240a5..6ad0e43 100644
 --- a/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def
 +++ b/llvm/include/llvm/TargetParser/AMDGPUTargetParser.def
-@@ -97,7 +97,13 @@ AMDGCN_GPU      ("gfx908",    GK_GFX908,  ( 9, 0,  8), FEATURE_FAST_FMA_F32|FEAT
- AMDGCN_GPU      ("gfx909",    GK_GFX909,  ( 9, 0,  9), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK)
- AMDGCN_GPU      ("gfx90a",    GK_GFX90A,  ( 9, 0, 10), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
- AMDGCN_GPU      ("gfx90c",    GK_GFX90C,  ( 9, 0, 12), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK)
-+AMDGCN_GPU      ("gfx926",    GK_GFX926,  ( 9, 2,  6), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
-+AMDGCN_GPU      ("gfx928",    GK_GFX928,  ( 9, 2,  8), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
-+AMDGCN_GPU      ("gfx92a",    GK_GFX92A,  ( 9, 2, 10), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
-+AMDGCN_GPU      ("gfx936",    GK_GFX936,  ( 9, 3,  6), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
-+AMDGCN_GPU      ("gfx938",    GK_GFX938,  ( 9, 3,  8), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
- AMDGCN_GPU      ("gfx942",    GK_GFX942,  ( 9, 4,  2), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
-+AMDGCN_GPU      ("gfx946",    GK_GFX946,  ( 9, 4,  6), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
- AMDGCN_GPU      ("gfx950",    GK_GFX950,  ( 9, 5,  0), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC)
- AMDGCN_GPU      ("gfx1010",   GK_GFX1010, (10, 1,  0), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK|FEATURE_WGP)
- AMDGCN_GPU      ("gfx1011",   GK_GFX1011, (10, 1,  1), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK|FEATURE_WGP)
+@@ -99,6 +99,12 @@ AMDGCN_GPU      ("gfx90a",    GK_GFX90A, Triple::AMDGPUSubArch90A,  ( 9, 0, 10),
+ AMDGCN_GPU      ("gfx90c",    GK_GFX90C, Triple::AMDGPUSubArch90C,  ( 9, 0, 12), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_XNACK_ON_OFF_MODES)
+ AMDGCN_GPU      ("gfx942",    GK_GFX942, Triple::AMDGPUSubArch942, ( 9, 4,  2), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_XNACK_ON_OFF_MODES|FEATURE_SRAMECC)
+ AMDGCN_GPU      ("gfx950",    GK_GFX950, Triple::AMDGPUSubArch950, ( 9, 5,  0), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_XNACK_ON_OFF_MODES|FEATURE_SRAMECC)
++AMDGCN_GPU      ("gfx926",    GK_GFX926, Triple::AMDGPUSubArch942, ( 9, 2,  6), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_XNACK_ON_OFF_MODES|FEATURE_SRAMECC)
++AMDGCN_GPU      ("gfx928",    GK_GFX928, Triple::AMDGPUSubArch942, ( 9, 2,  8), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_XNACK_ON_OFF_MODES|FEATURE_SRAMECC)
++AMDGCN_GPU      ("gfx92a",    GK_GFX92A, Triple::AMDGPUSubArch942, ( 9, 2, 10), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_XNACK_ON_OFF_MODES|FEATURE_SRAMECC)
++AMDGCN_GPU      ("gfx936",    GK_GFX936, Triple::AMDGPUSubArch942, ( 9, 3,  6), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_XNACK_ON_OFF_MODES|FEATURE_SRAMECC)
++AMDGCN_GPU      ("gfx938",    GK_GFX938, Triple::AMDGPUSubArch942, ( 9, 3,  8), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_XNACK_ON_OFF_MODES|FEATURE_SRAMECC)
++AMDGCN_GPU      ("gfx946",    GK_GFX946, Triple::AMDGPUSubArch950, ( 9, 4,  6), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_XNACK_ON_OFF_MODES|FEATURE_SRAMECC)
+ AMDGCN_GPU      ("gfx1010",   GK_GFX1010, Triple::AMDGPUSubArch1010, (10, 1,  0), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK|FEATURE_XNACK_ON_OFF_MODES|FEATURE_WGP)
+ AMDGCN_GPU      ("gfx1011",   GK_GFX1011, Triple::AMDGPUSubArch1011, (10, 1,  1), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK|FEATURE_XNACK_ON_OFF_MODES|FEATURE_WGP)
+ AMDGCN_GPU      ("gfx1012",   GK_GFX1012, Triple::AMDGPUSubArch1012, (10, 1,  2), FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK|FEATURE_XNACK_ON_OFF_MODES|FEATURE_WGP)
 diff --git a/llvm/lib/IR/Intrinsics.cpp b/llvm/lib/IR/Intrinsics.cpp
+index 266af8e..0cf552e 100644
 --- a/llvm/lib/IR/Intrinsics.cpp
 +++ b/llvm/lib/IR/Intrinsics.cpp
 @@ -17,6 +17,7 @@
@@ -38,6 +89,7 @@ diff --git a/llvm/lib/IR/Intrinsics.cpp b/llvm/lib/IR/Intrinsics.cpp
  #include "llvm/IR/IntrinsicsBPF.h"
  #include "llvm/IR/IntrinsicsHexagon.h"
 diff --git a/llvm/lib/Target/AMDGPU/GCNProcessors.td b/llvm/lib/Target/AMDGPU/GCNProcessors.td
+index 2edd835..d5a72dc 100644
 --- a/llvm/lib/Target/AMDGPU/GCNProcessors.td
 +++ b/llvm/lib/Target/AMDGPU/GCNProcessors.td
 @@ -192,10 +192,34 @@ def : ProcessorModel<"gfx90c", SIQuarterSpeedModel,
@@ -75,7 +127,107 @@ diff --git a/llvm/lib/Target/AMDGPU/GCNProcessors.td b/llvm/lib/Target/AMDGPU/GC
  def : ProcessorModel<"gfx950", SIDPGFX950FullSpeedModel,
    FeatureISAVersion9_5_0.Features
  >;
+diff --git a/llvm/lib/Target/AMDGPU/MCTargetDesc/AMDGPUTargetStreamer.cpp b/llvm/lib/Target/AMDGPU/MCTargetDesc/AMDGPUTargetStreamer.cpp
+index d70ad37..499de86 100644
+--- a/llvm/lib/Target/AMDGPU/MCTargetDesc/AMDGPUTargetStreamer.cpp
++++ b/llvm/lib/Target/AMDGPU/MCTargetDesc/AMDGPUTargetStreamer.cpp
+@@ -98,6 +98,12 @@ StringRef AMDGPUTargetStreamer::getArchNameFromElfMach(unsigned ElfMach) {
+   case ELF::EF_AMDGPU_MACH_AMDGCN_GFX90C:  AK = GK_GFX90C;  break;
+   case ELF::EF_AMDGPU_MACH_AMDGCN_GFX942:  AK = GK_GFX942;  break;
+   case ELF::EF_AMDGPU_MACH_AMDGCN_GFX950:  AK = GK_GFX950;  break;
++  case ELF::EF_HCU_MACH_AMDGCN_GFX926: AK = GK_GFX926; break;
++  case ELF::EF_HCU_MACH_AMDGCN_GFX928: AK = GK_GFX928; break;
++  case ELF::EF_HCU_MACH_AMDGCN_GFX92A: AK = GK_GFX92A; break;
++  case ELF::EF_HCU_MACH_AMDGCN_GFX936: AK = GK_GFX936; break;
++  case ELF::EF_HCU_MACH_AMDGCN_GFX938: AK = GK_GFX938; break;
++  case ELF::EF_HCU_MACH_AMDGCN_GFX946: AK = GK_GFX946; break;
+   case ELF::EF_AMDGPU_MACH_AMDGCN_GFX1010: AK = GK_GFX1010; break;
+   case ELF::EF_AMDGPU_MACH_AMDGCN_GFX1011: AK = GK_GFX1011; break;
+   case ELF::EF_AMDGPU_MACH_AMDGCN_GFX1012: AK = GK_GFX1012; break;
+@@ -193,6 +199,12 @@ unsigned AMDGPUTargetStreamer::getElfMach(StringRef GPU) {
+   case GK_GFX90C:  return ELF::EF_AMDGPU_MACH_AMDGCN_GFX90C;
+   case GK_GFX942:  return ELF::EF_AMDGPU_MACH_AMDGCN_GFX942;
+   case GK_GFX950:  return ELF::EF_AMDGPU_MACH_AMDGCN_GFX950;
++  case GK_GFX926:  return ELF::EF_HCU_MACH_AMDGCN_GFX926;
++  case GK_GFX928:  return ELF::EF_HCU_MACH_AMDGCN_GFX928;
++  case GK_GFX92A:  return ELF::EF_HCU_MACH_AMDGCN_GFX92A;
++  case GK_GFX936:  return ELF::EF_HCU_MACH_AMDGCN_GFX936;
++  case GK_GFX938:  return ELF::EF_HCU_MACH_AMDGCN_GFX938;
++  case GK_GFX946:  return ELF::EF_HCU_MACH_AMDGCN_GFX946;
+   case GK_GFX1010: return ELF::EF_AMDGPU_MACH_AMDGCN_GFX1010;
+   case GK_GFX1011: return ELF::EF_AMDGPU_MACH_AMDGCN_GFX1011;
+   case GK_GFX1012: return ELF::EF_AMDGPU_MACH_AMDGCN_GFX1012;
+diff --git a/llvm/lib/TargetParser/AMDGPUTargetParser.cpp b/llvm/lib/TargetParser/AMDGPUTargetParser.cpp
+index c5f4247..8f18728 100644
+--- a/llvm/lib/TargetParser/AMDGPUTargetParser.cpp
++++ b/llvm/lib/TargetParser/AMDGPUTargetParser.cpp
+@@ -46,14 +46,12 @@ Triple::SubArchType llvm::AMDGPU::getSubArch(GPUKind AK) {
+ 
+ AMDGPU::GPUKind
+ llvm::AMDGPU::getGPUKindFromSubArch(Triple::SubArchType SubArch) {
+-  switch (SubArch) {
++  GPUKind Kind = GK_NONE;
+ #define AMDGCN_GPU(NAME, ENUM, SUBARCH, ISAVERSION, FEATURES)                  \
+-  case SUBARCH:                                                                \
+-    return ENUM;
++  if (Kind == GK_NONE && SubArch == SUBARCH)                                   \
++    Kind = ENUM;
+ #include "llvm/TargetParser/AMDGPUTargetParser.def"
+-  default:
+-    return GK_NONE;
+-  }
++  return Kind;
+ }
+ 
+ static const Triple::SubArchType
+@@ -280,14 +278,15 @@ unsigned AMDGPU::getArchAttrAMDGCN(GPUKind AK) {
+ }
+ 
+ unsigned AMDGPU::getArchAttrAMDGCN(Triple::SubArchType SubArch) {
+-  switch (SubArch) {
++  unsigned Attr = FEATURE_NONE;
++  bool Found = false;
+ #define AMDGCN_GPU(NAME, ENUM, SUBARCH, ISAVERSION, FEATURES)                  \
+-  case SUBARCH:                                                                \
+-    return FEATURES;
+-#include "llvm/TargetParser/AMDGPUTargetParser.def"
+-  default:
+-    return FEATURE_NONE;
++  if (!Found && SubArch == SUBARCH) {                                          \
++    Attr = FEATURES;                                                           \
++    Found = true;                                                              \
+   }
++#include "llvm/TargetParser/AMDGPUTargetParser.def"
++  return Attr;
+ }
+ 
+ unsigned AMDGPU::getArchAttrR600(GPUKind AK) {
+@@ -345,16 +344,17 @@ AMDGPU::IsaVersion AMDGPU::getIsaVersion(StringRef GPU) {
+ }
+ 
+ AMDGPU::IsaVersion AMDGPU::getIsaVersion(Triple::SubArchType SubArch) {
+-  switch (SubArch) {
++  IsaVersion Version = {0, 0, 0};
++  bool Found = false;
+ #define MAKE_ISAVERSION(A, B, C) {A, B, C}
+ #define AMDGCN_GPU(NAME, ENUM, SUBARCH, ISAVERSION, FEATURES)                  \
+-  case SUBARCH:                                                                \
+-    return MAKE_ISAVERSION ISAVERSION;
++  if (!Found && SubArch == SUBARCH) {                                          \
++    Version = MAKE_ISAVERSION ISAVERSION;                                      \
++    Found = true;                                                              \
++  }
+ #include "llvm/TargetParser/AMDGPUTargetParser.def"
+ #undef MAKE_ISAVERSION
+-  default:
+-    return {0, 0, 0};
+-  }
++  return Version;
+ }
+ 
+ StringRef AMDGPU::getCanonicalArchName(const Triple &T, StringRef Arch) {
 diff --git a/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td b/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td
+index ba185dc..8aa7f47 100644
 --- a/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td
 +++ b/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td
 @@ -3261,4 +3261,6 @@ def ROCDL_TargetAttr :
@@ -86,6 +238,7 @@ diff --git a/mlir/include/mlir/Dialect/LLVMIR/ROCDLOps.td b/mlir/include/mlir/Di
 +include "mlir/Dialect/LLVMIR/ROCDLHCUOps.td"
  #endif // ROCDLIR_OPS
 diff --git a/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp b/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp
+index 4239321..ab2f9a5 100644
 --- a/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp
 +++ b/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp
 @@ -18,6 +18,7 @@
@@ -95,11 +248,12 @@ diff --git a/mlir/lib/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.cpp b
 +#include "llvm/IR/IntrinsicsHCU.h"
  #include "llvm/IR/IntrinsicsAMDGPU.h"
  #include "llvm/Support/raw_ostream.h"
- 
+ #include <cstdint>
 diff --git a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
+index c693169..f4ad2e3 100644
 --- a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
 +++ b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
-@@ -1011,6 +1011,10 @@ llvm_target_intrinsics_list = [
+@@ -1001,6 +1001,10 @@ llvm_target_intrinsics_list = [
          "name": "AMDGPU",
          "intrinsic_prefix": "amdgcn",
      },
@@ -111,9 +265,10 @@ diff --git a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel b/utils/bazel/llv
          "name": "ARM",
          "intrinsic_prefix": "arm",
 diff --git a/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel b/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
+index 7ec5ddc..4af1606 100644
 --- a/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
 +++ b/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
-@@ -6651,6 +6651,7 @@ td_library(
+@@ -6691,6 +6691,7 @@ td_library(
          "include/mlir/Dialect/LLVMIR/ROCDLAttrs.td",
          "include/mlir/Dialect/LLVMIR/ROCDLDialect.td",
          "include/mlir/Dialect/LLVMIR/ROCDLEnums.td",

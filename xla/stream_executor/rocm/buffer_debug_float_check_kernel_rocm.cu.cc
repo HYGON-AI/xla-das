@@ -13,11 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <hip/hip_bfloat16.h>
+#include <hip/hip_runtime.h>
+
 #include <cstdint>
 
 #include "absl/base/casts.h"
-#include <hip/hip_bfloat16.h>
-#include <hip/hip_runtime.h>
 #include "xla/stream_executor/gpu/buffer_debug_float_check_kernel.h"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
 #include "xla/stream_executor/kernel_spec.h"
@@ -31,7 +32,7 @@ __device__ static constexpr uint64_t kWarpSize = 32;
 #endif
 }  // namespace stream_executor::gpu
 
-#include "xla/stream_executor/gpu/buffer_debug_float_check_kernel_lib.cu.h"
+#include "xla/stream_executor/gpu/buffer_debug_float_check_kernel_lib.cu.h.inc"
 
 namespace stream_executor::gpu {
 

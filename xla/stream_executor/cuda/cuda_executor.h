@@ -67,6 +67,9 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 
+class CudaStream;
+enum class CudaStreamType;
+
 // This class implements GpuExecutor for NVIDIA GPUs that use CUDA libraries.
 class CudaExecutor : public GpuExecutor {
  public:
@@ -123,6 +126,9 @@ class CudaExecutor : public GpuExecutor {
       const override {
     return CudaExecutor::CreateDeviceDescription(device_ordinal());
   }
+
+  absl::StatusOr<std::string> GetInterconnectStatus() const override;
+
   absl::StatusOr<std::unique_ptr<MemoryAllocation>> HostMemoryAllocate(
       uint64_t size) override;
 
@@ -132,6 +138,7 @@ class CudaExecutor : public GpuExecutor {
   bool IsVmmMemory(const DeviceAddressBase& address) override;
 
   absl::StatusOr<MemorySpace> GetPointerMemorySpace(const void* ptr) override;
+  absl::StatusOr<uint64_t> GetCollectiveMemoryGranularity() const override;
 
   Stream* FindAllocatedStream(void* gpu_stream) override {
     absl::MutexLock lock(alive_gpu_streams_mu_);
@@ -141,6 +148,10 @@ class CudaExecutor : public GpuExecutor {
     }
     return it->second;
   }
+
+  absl::StatusOr<std::unique_ptr<CudaStream>> CreateStream(
+      std::optional<std::variant<StreamPriority, int>> priority,
+      CudaStreamType type);
 
   static absl::StatusOr<std::unique_ptr<DeviceDescription>>
   CreateDeviceDescription(int device_ordinal);
