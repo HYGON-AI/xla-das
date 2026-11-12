@@ -73,7 +73,12 @@ EXCLUDED_TESTS=(
     "RaggedAllToAllTest/RaggedAllToAllTest.RaggedAllToAll_SeveralOps_2GPUs/sync_one_shot_with_multi_gpu_barrier_with_nccl_private"
     "RaggedAllToAllTest/RaggedAllToAllTest.RaggedAllToAll_2GPUs/sync_one_shot_with_multi_gpu_barrier_with_nccl_private"
     "RaggedAllToAllTest/RaggedAllToAllTest.RaggedAllToAll_2GPUs/sync_nccl_peer"
-
+    # Exclusions carried over from the new baseline's list.
+    "StreamExecutorGpuClientTest.NumaNode"
+    "GpuKernelTilingTest.ReductionInputTooLarge"
+    "MxScaledDotExecutionTest.MxFp4Fp8MixedBatchedCorrectness"
+    "NumericTestsForBlas/NumericTestsForBlas.Infinity/dot_tf32_tf32_f32_x3"
+    "PrngTest.PassInGlobalRngSeed"
 )
 
 for arg in "$@"; do
@@ -97,7 +102,7 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla_ci.bazelrc" test \
     --flaky_test_attempts=3 \
     --nokeep_going \
     --test_env=TF_TESTS_PER_GPU=1 \
-    --action_env=XLA_FLAGS="--xla_gpu_force_compilation_parallelism=16" \
+    --action_env=XLA_FLAGS="--xla_gpu_force_compilation_parallelism=16 --xla_gpu_blas_max_algorithms=8" \
     --test_output=errors \
     --run_under=//build_tools/rocm:parallel_gpu_execute \
     --test_filter=-$(

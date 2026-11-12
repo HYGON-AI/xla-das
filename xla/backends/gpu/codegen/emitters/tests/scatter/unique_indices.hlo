@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified by Hygon Information Technology Co., Ltd., 2026.
 
-// RUN: fusion_to_mlir %s | emitters_opt -xla-test-optimize |\
+// RUN: gpu_fusion_to_mlir %s | emitters_opt -xla-test-optimize |\
 // RUN:   FileCheck %s
 // RUN: gpu_test_correctness %s
 

@@ -22,6 +22,7 @@ limitations under the License.
 #include <cassert>
 
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
@@ -52,6 +53,7 @@ void CreateTritonXlaPipeline(
   pm->addPass(mlir::triton::xla::createTritonXLAFoldReshapeAroundForLoopPass());
 
   pm->addPass(emitters::createSafeIntegerArithmeticPass());
+  pm->addNestedPass<mlir::func::FuncOp>(emitters::createSimplifyArithPass());
   pm->addPass(mlir::triton::xla::createUnsupportedElementwiseToTritonPass());
 
   auto* cuda_cc = gpu_cc.cuda_compute_capability();

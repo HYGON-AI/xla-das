@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 
 namespace xla {
@@ -24,11 +25,12 @@ namespace gpu {
 namespace {
 
 using ::testing::ElementsAre;
+using ::xla::xtile::BlockLevelFusionConfig;
 
 TEST(BlockLevelParametersTest,
      BlockLevelParametersCanBeParsedFromBlockLevelFusionConfig) {
   BlockLevelFusionConfig block_level_fusion_config;
-  Tile tile;
+  xtile::Tile tile;
   tile.mutable_sizes()->Add(18);
   tile.mutable_sizes()->Add(19);
   *block_level_fusion_config.add_output_tiles() = tile;

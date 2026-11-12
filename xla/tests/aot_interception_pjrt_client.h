@@ -41,10 +41,7 @@ namespace xla {
 // The interception mode dictated by the testing macro.
 enum class AOTTestMode {
   kGoldenVerification,
-  kBackwardPrevious,
-  kBackwardOldest,
-  kForwardPrevious,
-  kForwardOldest,
+  kBackwardsCompatibility,
 };
 
 // A wrapper around an existing PjRtClient that intercepts compilation
@@ -58,6 +55,8 @@ class AOTInterceptionPjrtClient : public PjRtClient {
         artifact_path_(std::move(artifact_path)) {}
 
   ~AOTInterceptionPjrtClient() override = default;
+
+  absl::StatusOr<std::string> LoadSerializedArtifact();
 
   // Intercepted compilation methods.
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
