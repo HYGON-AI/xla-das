@@ -16,18 +16,8 @@ on:
     branches:
       - main
       - dev
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "xla/**"
-      - "third_party/gpus/**"
-      - "third_party/llvm/**"
-      - "third_party/triton/**"
-      - "build_tools/hcu/**"
-      - "BUILD.bazel"
-      - "MODULE.bazel"
-      - "WORKSPACE"
-      - ".bazelrc"
-      - ".github/workflows/hcu_xla_core_ci.yml"
+    # Every PR revision requires a fresh ready-hcu label from a maintainer.
+    types: [labeled]
   workflow_dispatch:
 
 concurrency:
@@ -39,14 +29,24 @@ jobs:
     name: Manual Approval for Core CI
     runs-on: ubuntu-latest
     environment: ci-protection
-    if: ${{ github.event_name == 'pull_request_target' }}
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'ready-hcu'
     steps:
       - run: echo "Waiting for approval..."
 
   build:
     name: Build XLA
     needs: [manual_approval]
-    if: ${{ !cancelled() && (needs.manual_approval.result == 'success' || needs.manual_approval.result == 'skipped') }}
+    if: >-
+      !cancelled() &&
+      ((github.event_name == 'pull_request_target' &&
+        github.event.action == 'labeled' &&
+        github.event.label.name == 'ready-hcu' &&
+        needs.manual_approval.result == 'success') ||
+       (github.event_name != 'pull_request_target' &&
+        needs.manual_approval.result == 'skipped'))
     runs-on: hygon-build
     timeout-minutes: 90
     env:
@@ -61,7 +61,8 @@ jobs:
       - name: Checking out xla-das
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/head', github.event.pull_request.number) || github.sha }}
+          # Pin to the revision approved by the label, even if the PR changes later.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: xla-das
           persist-credentials: false
 
@@ -93,7 +94,7 @@ jobs:
       - name: Checking out xla-das
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/head', github.event.pull_request.number) || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: xla-das
           persist-credentials: false
 
